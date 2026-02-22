@@ -2,6 +2,7 @@
 
 import json
 
+import pandas as pd
 from flask import Blueprint, jsonify, request
 
 from src.api.helpers import (
@@ -41,6 +42,27 @@ def api_best_team():
     if pred_df is None or pred_df.empty:
         return jsonify({"error": "No predictions available. Train models first."}), 400
 
+    # Normalise position column name (CSV may have position_clean)
+    if "position_clean" in pred_df.columns and "position" not in pred_df.columns:
+        pred_df["position"] = pred_df["position_clean"]
+
+    # Enrich with bootstrap data (cost, team_code) when missing from CSV
+    bootstrap = load_bootstrap()
+    if bootstrap:
+        el_map = {el["id"]: el for el in bootstrap.get("elements", [])}
+        id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
+        if "cost" not in pred_df.columns:
+            pred_df["cost"] = None
+        if "team_code" not in pred_df.columns:
+            pred_df["team_code"] = None
+        for idx, row in pred_df.iterrows():
+            el = el_map.get(int(row["player_id"])) if pd.notna(row.get("player_id")) else None
+            if el:
+                if pd.isna(row.get("cost")) or row.get("cost") is None:
+                    pred_df.at[idx, "cost"] = round(el.get("now_cost", 0) / 10, 1)
+                if pd.isna(row.get("team_code")) or row.get("team_code") is None:
+                    pred_df.at[idx, "team_code"] = id_to_code.get(el.get("team"))
+
     pool = pred_df.dropna(subset=["position", "cost", target]).copy()
 
     team_map = get_team_map()
@@ -61,12 +83,27 @@ def api_best_team():
     if result is None:
         return jsonify({"error": "Could not find a valid team."}), 400
 
+    # Compute both GW and 3-GW totals for the summary panel
+    players = result.get("players", result["starters"] + result["bench"])
+    starters = [p for p in players if p.get("starter")]
+    captain_id = result.get("captain_id")
+
+    def _sum_xi(col):
+        return round(sum(
+            (p.get(col) or 0) * (2 if p.get("player_id") == captain_id else 1)
+            for p in starters
+        ), 1)
+
     return jsonify(scrub_nan({
+        "players": players,
         "starters": result["starters"],
         "bench": result["bench"],
         "total_cost": result["total_cost"],
         "starting_points": result["starting_points"],
-        "captain_id": result.get("captain_id"),
+        "starting_gw_points": _sum_xi("predicted_next_gw_points"),
+        "starting_gw3_points": _sum_xi("predicted_next_3gw_points"),
+        "remaining": round(budget - result["total_cost"], 1),
+        "captain_id": captain_id,
         "target": target,
         "next_gw": get_next_gw(),
     }))
@@ -117,11 +154,35 @@ def api_my_team():
     bank = entry_history.get("bank", 0) / 10
     squad = []
 
+    # Build fixture/FDR/opponent maps for the next GW
+    next_gw = get_next_gw(bootstrap)
+    fdr_map = {}
+    home_map = {}
+    opp_map = {}
+    fixtures_path = CACHE_DIR / "fpl_api_fixtures.json"
+    if next_gw and fixtures_path.exists():
+        all_fixtures = json.loads(fixtures_path.read_text(encoding="utf-8"))
+        code_to_short = {t["code"]: t["short_name"] for t in bootstrap.get("teams", [])}
+        for f in all_fixtures:
+            if f.get("event") == next_gw:
+                h_code = team_id_to_code.get(f["team_h"])
+                a_code = team_id_to_code.get(f["team_a"])
+                if h_code:
+                    fdr_map[h_code] = f.get("team_h_difficulty", 3)
+                    home_map[h_code] = True
+                    opp_map[h_code] = code_to_short.get(a_code, "")
+                if a_code:
+                    fdr_map[a_code] = f.get("team_a_difficulty", 3)
+                    home_map[a_code] = False
+                    opp_map[a_code] = code_to_short.get(h_code, "")
+
     for pick in picks_data.get("picks", []):
         eid = pick.get("element")
         el = elements_map.get(eid, {})
         tid = el.get("team")
         tc = team_id_to_code.get(tid)
+        multiplier = pick.get("multiplier", 1)
+        raw_pts = el.get("event_points", 0)
         squad.append({
             "player_id": eid,
             "web_name": el.get("web_name", "Unknown"),
@@ -130,11 +191,17 @@ def api_my_team():
             "team": team_map.get(tc, ""),
             "cost": round(el.get("now_cost", 0) / 10, 1),
             "total_points": el.get("total_points", 0),
-            "event_points": el.get("event_points", 0),
+            "event_points_raw": raw_pts,
+            "event_points": raw_pts * multiplier,
             "starter": pick.get("position", 12) <= 11,
             "is_captain": pick.get("is_captain", False),
             "is_vice_captain": pick.get("is_vice_captain", False),
-            "multiplier": pick.get("multiplier", 1),
+            "multiplier": multiplier,
+            "status": el.get("status", "a"),
+            "news": el.get("news", ""),
+            "chance_of_playing": el.get("chance_of_playing_next_round"),
+            "fdr": fdr_map.get(tc),
+            "opponent": opp_map.get(tc, ""),
         })
 
     # Enrich with predictions
@@ -150,9 +217,26 @@ def api_my_team():
     # Optimized XI
     optimized = optimize_starting_xi(squad)
 
+    # Computed aggregates the frontend expects
+    squad_value = round(sum(p["cost"] for p in squad), 1)
+    sell_value = round(entry_history.get("value", 0) / 10, 1)
+    active_chip = picks_data.get("active_chip")
+
+    xi_actual_gw = sum(
+        p["event_points"] for p in squad if p["starter"]
+    )
+    xi_pred_gw = round(sum(
+        p.get("predicted_next_gw_points", 0) * (2 if p["is_captain"] else 1)
+        for p in optimized if p["starter"]
+    ), 1)
+    xi_pred_3gw = round(sum(
+        p.get("predicted_next_3gw_points", 0) * (2 if p["is_captain"] else 1)
+        for p in optimized if p["starter"]
+    ), 1)
+
     return jsonify(scrub_nan({
         "squad": squad,
-        "optimized": optimized,
+        "optimized_squad": optimized,
         "bank": bank,
         "free_transfers": free_transfers,
         "manager": {
@@ -162,6 +246,13 @@ def api_my_team():
             "overall_rank": entry.get("summary_overall_rank", 0),
         },
         "next_gw": get_next_gw(),
+        "current_event": current_event,
+        "squad_value": squad_value,
+        "sell_value": sell_value,
+        "xi_actual_gw": xi_actual_gw,
+        "xi_pred_gw": xi_pred_gw,
+        "xi_pred_3gw": xi_pred_3gw,
+        "active_chip": active_chip,
     }))
 
 
@@ -248,6 +339,25 @@ def api_transfer_recommendations():
     pred_df = load_predictions_from_csv()
     if pred_df is None or pred_df.empty:
         return jsonify({"error": "No predictions available. Train models first."}), 400
+
+    # Normalise position column name (CSV may have position_clean)
+    if "position_clean" in pred_df.columns and "position" not in pred_df.columns:
+        pred_df["position"] = pred_df["position_clean"]
+
+    # Enrich with bootstrap data (cost, team_code) when missing from CSV
+    if bootstrap:
+        el_map_enrich = {el["id"]: el for el in bootstrap.get("elements", [])}
+        if "cost" not in pred_df.columns:
+            pred_df["cost"] = None
+        if "team_code" not in pred_df.columns:
+            pred_df["team_code"] = None
+        for idx, row in pred_df.iterrows():
+            el = el_map_enrich.get(int(row["player_id"])) if pd.notna(row.get("player_id")) else None
+            if el:
+                if pd.isna(row.get("cost")) or row.get("cost") is None:
+                    pred_df.at[idx, "cost"] = round(el.get("now_cost", 0) / 10, 1)
+                if pd.isna(row.get("team_code")) or row.get("team_code") is None:
+                    pred_df.at[idx, "team_code"] = team_id_to_code.get(el.get("team"))
 
     pool = pred_df.dropna(subset=["position", "cost", target]).copy()
 

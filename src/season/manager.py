@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
+import pandas as pd
+
 from src.data.fpl_api import (
     fetch_fpl_api,
     fetch_manager_entry,
@@ -646,7 +648,7 @@ class SeasonManager:
         free_transfers = self._calculate_free_transfers(history)
 
         elements_map = self._get_elements_map(bootstrap)
-        id_to_code, _, code_to_short = self._get_team_maps(bootstrap)
+        id_to_code, id_to_short, code_to_short = self._get_team_maps(bootstrap)
 
         picks = picks_data.get("picks", [])
         entry_history = picks_data.get("entry_history", {})
@@ -662,11 +664,41 @@ class SeasonManager:
 
         total_budget = round(bank + current_squad_cost, 1)
 
+        # Build opponent map: team_code -> "OPP(H/A)" for next GW
+        fixtures_list = self._load_fixtures()
+        opponent_map: dict = {}
+        for f in fixtures_list:
+            if f.get("event") == next_gw:
+                h_code = id_to_code.get(f.get("team_h"))
+                a_code = id_to_code.get(f.get("team_a"))
+                a_short = id_to_short.get(f.get("team_a"), "?")
+                h_short = id_to_short.get(f.get("team_h"), "?")
+                if h_code is not None:
+                    opponent_map[h_code] = f"{a_short}(H)"
+                if a_code is not None:
+                    opponent_map[a_code] = f"{h_short}(A)"
+
         # 3) Run transfer solver
         log("Solving transfers...")
         from src.solver.transfers import solve_transfer_milp_with_hits
 
         target = "predicted_next_gw_points"
+
+        # Normalise position and enrich with cost/team_code from bootstrap
+        if "position_clean" in players_df.columns and "position" not in players_df.columns:
+            players_df["position"] = players_df["position_clean"]
+        if "cost" not in players_df.columns:
+            players_df["cost"] = None
+        if "team_code" not in players_df.columns:
+            players_df["team_code"] = None
+        for idx, row in players_df.iterrows():
+            el = elements_map.get(int(row["player_id"])) if pd.notna(row.get("player_id")) else None
+            if el:
+                if pd.isna(row.get("cost")) or row.get("cost") is None:
+                    players_df.at[idx, "cost"] = round(el.get("now_cost", 0) / 10, 1)
+                if pd.isna(row.get("team_code")) or row.get("team_code") is None:
+                    players_df.at[idx, "team_code"] = id_to_code.get(el.get("team"))
+
         pool = players_df.dropna(subset=["position", "cost", target]).copy()
         captain_col = "captain_score" if "captain_score" in pool.columns else None
 
@@ -692,42 +724,106 @@ class SeasonManager:
         chip_values_json = "{}"
         bank_analysis_json = "{}"
 
+        # Build a lookup for prediction data by player_id
+        pred_lookup: dict[int, dict] = {}
+        if hasattr(players_df, "iterrows"):
+            for _, prow in players_df.iterrows():
+                pid = int(prow.get("player_id", 0))
+                if pid:
+                    pred_lookup[pid] = {
+                        "predicted_next_gw_points": round(float(prow.get("predicted_next_gw_points") or 0), 2),
+                        "predicted_next_3gw_points": (
+                            round(float(prow["predicted_next_3gw_points"]), 2)
+                            if pd.notna(prow.get("predicted_next_3gw_points"))
+                            else None
+                        ),
+                        "captain_score": round(float(prow.get("captain_score") or 0), 2),
+                    }
+
         if transfer_result:
             log("Building recommendation...")
-            # Build transfer list
-            transfers = []
-            for pid in transfer_result.get("transfers_out_ids", set()):
+
+            def _enrich_player(pid: int) -> dict:
+                """Build a rich player dict from bootstrap + predictions."""
                 el = elements_map.get(pid, {})
                 tc = id_to_code.get(el.get("team"))
-                transfers.append({
-                    "out": {
-                        "player_id": pid,
-                        "web_name": el.get("web_name", "Unknown"),
-                        "cost": el.get("now_cost", 0) / 10,
-                    },
-                    "in": {},
-                })
-            in_ids = list(transfer_result.get("transfers_in_ids", set()))
-            for i, pid in enumerate(in_ids):
-                el = elements_map.get(pid, {})
-                tc = id_to_code.get(el.get("team"))
-                in_entry = {
+                preds = pred_lookup.get(pid, {})
+                return {
                     "player_id": pid,
                     "web_name": el.get("web_name", "Unknown"),
-                    "cost": el.get("now_cost", 0) / 10,
+                    "position": ELEMENT_TYPE_MAP.get(el.get("element_type"), ""),
+                    "team_code": tc,
+                    "team": code_to_short.get(tc, ""),
+                    "cost": round(el.get("now_cost", 0) / 10, 1),
+                    "total_points": el.get("total_points", 0),
+                    "event_points": el.get("event_points", 0),
+                    "predicted_next_gw_points": preds.get("predicted_next_gw_points", 0),
+                    "predicted_next_3gw_points": preds.get("predicted_next_3gw_points"),
+                    "captain_score": preds.get("captain_score", 0),
+                    "opponent": opponent_map.get(tc, ""),
                 }
-                if i < len(transfers):
-                    transfers[i]["in"] = in_entry
-                else:
-                    transfers.append({"out": {}, "in": in_entry})
+
+            # Build transfer list
+            transfers = []
+            out_ids = list(transfer_result.get("transfers_out_ids", set()))
+            in_ids = list(transfer_result.get("transfers_in_ids", set()))
+            max_len = max(len(out_ids), len(in_ids))
+            for i in range(max_len):
+                out_entry = _enrich_player(out_ids[i]) if i < len(out_ids) else {}
+                in_entry = _enrich_player(in_ids[i]) if i < len(in_ids) else {}
+                transfers.append({"out": out_entry, "in": in_entry})
 
             transfers_json = json.dumps(transfers)
             captain_id = transfer_result.get("captain_id")
             if captain_id:
                 el = elements_map.get(captain_id, {})
                 captain_name = el.get("web_name", "Unknown")
+
+            # Points: baseline (no changes) vs after transfers
+            current_xi_points = transfer_result.get("baseline_points", 0)
+            base_points = transfer_result.get("starting_points", 0)
             predicted_points = transfer_result.get("starting_points", 0)
-            new_squad_json = json.dumps(transfer_result.get("players", []))
+
+            # Enrich new_squad with full player data for pitch rendering
+            enriched_squad = []
+            for p in transfer_result.get("players", []):
+                pid = int(p.get("player_id", 0))
+                el = elements_map.get(pid, {})
+                tc = p.get("team_code") or id_to_code.get(el.get("team"))
+                preds = pred_lookup.get(pid, {})
+                enriched_squad.append({
+                    "player_id": pid,
+                    "web_name": el.get("web_name", str(p.get("web_name", "Unknown"))),
+                    "position": p.get("position", ELEMENT_TYPE_MAP.get(el.get("element_type"), "")),
+                    "team_code": tc,
+                    "team": code_to_short.get(tc, ""),
+                    "cost": round(float(p.get("cost", el.get("now_cost", 0) / 10)), 1),
+                    "predicted_next_gw_points": preds.get(
+                        "predicted_next_gw_points",
+                        round(float(p.get("predicted_next_gw_points", 0)), 2),
+                    ),
+                    "predicted_next_3gw_points": preds.get("predicted_next_3gw_points"),
+                    "captain_score": preds.get(
+                        "captain_score",
+                        round(float(p.get("captain_score", 0)), 2),
+                    ),
+                    "total_points": el.get("total_points", 0),
+                    "event_points": el.get("event_points", 0),
+                    "starter": bool(p.get("starter", False)),
+                    "is_captain": pid == captain_id if captain_id else False,
+                    "is_vice_captain": False,
+                    "opponent": opponent_map.get(tc, ""),
+                })
+            # Set vice captain (highest captain_score starter after captain)
+            vc_candidates = [
+                p for p in enriched_squad if p["starter"] and not p["is_captain"]
+            ]
+            if vc_candidates:
+                vc_candidates.sort(
+                    key=lambda p: p.get("captain_score", 0), reverse=True
+                )
+                vc_candidates[0]["is_vice_captain"] = True
+            new_squad_json = json.dumps(enriched_squad)
 
         # 5) Store recommendation
         log("Saving recommendation...")
@@ -745,6 +841,76 @@ class SeasonManager:
             base_points=base_points,
             current_xi_points=current_xi_points,
             free_transfers=free_transfers,
+        )
+
+        # 5b) Build and save strategic plan
+        log("Saving strategic plan...")
+        transfers_in_list = []
+        transfers_out_list = []
+        if transfer_result:
+            for pid in transfer_result.get("transfers_in_ids", set()):
+                el = elements_map.get(pid, {})
+                tc = id_to_code.get(el.get("team"))
+                preds = pred_lookup.get(pid, {})
+                transfers_in_list.append({
+                    "player_id": pid,
+                    "web_name": el.get("web_name", "Unknown"),
+                    "position": ELEMENT_TYPE_MAP.get(el.get("element_type"), ""),
+                    "cost": round(el.get("now_cost", 0) / 10, 1),
+                    "predicted_points": preds.get("predicted_next_gw_points", 0),
+                })
+            for pid in transfer_result.get("transfers_out_ids", set()):
+                el = elements_map.get(pid, {})
+                transfers_out_list.append({
+                    "player_id": pid,
+                    "web_name": el.get("web_name", "Unknown"),
+                })
+
+        n_transfers = len(transfers_in_list)
+        ft_used = min(n_transfers, free_transfers)
+        timeline_entry = {
+            "gw": next_gw,
+            "confidence": 0.85,
+            "ft_available": free_transfers,
+            "ft_used": ft_used,
+            "transfers_in": transfers_in_list,
+            "transfers_out": transfers_out_list,
+            "captain_name": captain_name,
+            "captain_points": pred_lookup.get(captain_id, {}).get(
+                "predicted_next_gw_points", 0
+            ) if captain_id else 0,
+            "predicted_points": predicted_points,
+            "chip": chip_suggestion,
+        }
+
+        # Rationale for the plan
+        gain = predicted_points - current_xi_points
+        rationale_parts = []
+        if n_transfers > 0:
+            rationale_parts.append(
+                f"Recommending {n_transfers} transfer{'s' if n_transfers > 1 else ''} "
+                f"for GW{next_gw}"
+            )
+        if gain > 0.5:
+            rationale_parts.append(f"Expected gain of +{gain:.1f} pts over current XI")
+        if captain_name:
+            rationale_parts.append(f"Captain: {captain_name}")
+        plan_rationale = ". ".join(rationale_parts) + "." if rationale_parts else "No changes recommended."
+
+        strategic_plan = {
+            "rationale": plan_rationale,
+            "timeline": [timeline_entry],
+            "chip_schedule": {},
+            "chip_synergies": [],
+        }
+        if chip_suggestion:
+            strategic_plan["chip_schedule"][chip_suggestion] = next_gw
+
+        self.plans.save_strategic_plan(
+            season_id=season_id,
+            as_of_gw=next_gw,
+            plan_json=json.dumps(strategic_plan),
+            chip_heatmap_json="{}",
         )
 
         # 6) Update fixture calendar
@@ -788,23 +954,49 @@ class SeasonManager:
         except (json.JSONDecodeError, TypeError):
             pass
 
-        steps = []
+        # Get GW deadline from bootstrap
+        deadline = None
+        try:
+            bootstrap = self._load_bootstrap()
+            for ev in bootstrap.get("events", []):
+                if ev.get("id") == gw:
+                    deadline = ev.get("deadline_time")
+                    break
+        except Exception:
+            pass
+
+        steps: list[dict] = []
         # Transfer steps
         if transfers:
             for t in transfers:
-                out_name = t.get("out", {}).get("web_name", "?")
-                in_name = t.get("in", {}).get("web_name", "?")
+                out_info = t.get("out", {})
+                in_info = t.get("in", {})
+                out_name = out_info.get("web_name", "?")
+                in_name = in_info.get("web_name", "?")
                 if out_name != "?" and in_name != "?":
-                    steps.append(f"Transfer OUT {out_name} → IN {in_name}")
+                    desc = f"Transfer OUT {out_name} → IN {in_name}"
                 elif in_name != "?":
-                    steps.append(f"Transfer IN {in_name}")
+                    desc = f"Transfer IN {in_name}"
+                else:
+                    continue
+                step = {"action": "transfer", "description": desc}
+                step["player_out"] = out_info
+                step["player_in"] = in_info
+                steps.append(step)
         else:
-            steps.append("Bank your free transfer (no transfers recommended)")
+            steps.append({
+                "action": "transfer",
+                "description": "Bank your free transfer (no transfers recommended)",
+            })
 
         # Captain step
         captain_name = latest.get("captain_name")
         if captain_name:
-            steps.append(f"Set captain: {captain_name}")
+            steps.append({
+                "action": "captain",
+                "description": f"Set captain: {captain_name}",
+                "captain_id": latest.get("captain_id"),
+            })
 
         # Chip step
         chip = latest.get("chip_suggestion")
@@ -815,11 +1007,40 @@ class SeasonManager:
                 "bboost": "Bench Boost",
                 "3xc": "Triple Captain",
             }
-            steps.append(f"Activate chip: {chip_labels.get(chip, chip)}")
+            step = {
+                "action": "chip",
+                "description": f"Activate chip: {chip_labels.get(chip, chip)}",
+            }
+            # Attach new squad for WC/FH pitch rendering
+            if chip in ("wildcard", "freehit"):
+                try:
+                    new_squad = json.loads(latest.get("new_squad_json") or "[]")
+                    step["new_squad"] = new_squad
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            steps.append(step)
+
+        # Build rationale
+        n_transfers = len(transfers) if transfers else 0
+        ft = latest.get("free_transfers") or 1
+        pts_current = latest.get("current_xi_points") or 0
+        pts_after = latest.get("predicted_points") or 0
+        gain = pts_after - pts_current
+        rationale_parts = []
+        if n_transfers > 0:
+            rationale_parts.append(
+                f"{n_transfers} transfer{'s' if n_transfers > 1 else ''} "
+                f"using {min(n_transfers, ft)} of {ft} free transfer{'s' if ft > 1 else ''}"
+            )
+        if gain > 0.5:
+            rationale_parts.append(f"Expected gain: +{gain:.1f} pts")
+        rationale = ". ".join(rationale_parts) + "." if rationale_parts else None
 
         return {
             "gameweek": gw,
+            "deadline": deadline,
             "steps": steps,
+            "rationale": rationale,
             "predicted_points": latest.get("predicted_points"),
             "captain": captain_name,
             "chip": chip,

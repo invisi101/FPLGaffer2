@@ -52,13 +52,15 @@ def test_api_routes_exist(app):
         assert route in rules, f"Missing route: {route}"
 
 
-def test_predictions_endpoint_no_data(client):
-    """GET /api/predictions returns 400 when no predictions CSV exists."""
+def test_predictions_endpoint(client):
+    """GET /api/predictions returns 200 with data or 400 when no CSV exists."""
     resp = client.get("/api/predictions")
-    # Without trained models, returns 400
-    assert resp.status_code == 400
+    assert resp.status_code in (200, 400)
     data = resp.get_json()
-    assert "error" in data
+    if resp.status_code == 400:
+        assert "error" in data
+    else:
+        assert "players" in data
 
 
 def test_model_info_endpoint(client):

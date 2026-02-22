@@ -270,9 +270,11 @@ def solve_transfer_milp_with_hits(
         budget=budget, max_transfers=0,
         team_cap=team_cap, captain_col=captain_col,
     )
+    baseline_points = 0.0
     if baseline is not None:
         best = baseline
         best_net = baseline["starting_points"]
+        baseline_points = best_net
         best["hits"] = 0
         best["hit_cost"] = 0.0
         best["net_points"] = round(best_net, 2)
@@ -305,4 +307,6 @@ def solve_transfer_milp_with_hits(
             best["hit_cost"] = round(hits * hit_cost, 1)
             best["net_points"] = round(net, 2)
 
+    if best is not None:
+        best["baseline_points"] = round(baseline_points, 2)
     return best

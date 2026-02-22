@@ -42,14 +42,24 @@ def load_bootstrap():
 
 
 def get_next_gw(bootstrap=None):
-    """Determine the next unfinished GW from bootstrap events."""
+    """Determine the next gameweek to predict for from bootstrap events.
+
+    Uses ``is_next`` flag first (the GW *after* the one in progress),
+    then falls back to current + 1 if no ``is_next`` is set.
+    Returns None when the season is over (GW38 finished).
+    """
     if bootstrap is None:
         bootstrap = load_bootstrap()
     if not bootstrap:
         return None
     for ev in bootstrap.get("events", []):
-        if not ev.get("finished"):
+        if ev.get("is_next"):
             return ev["id"]
+    # Fallback: one after the current GW
+    for ev in bootstrap.get("events", []):
+        if ev.get("is_current"):
+            next_id = ev["id"] + 1
+            return next_id if next_id <= 38 else None
     return None
 
 

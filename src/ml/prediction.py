@@ -385,9 +385,24 @@ def generate_predictions(
                 if n_zeroed > 0:
                     log.info("  Zeroed predictions for %d unavailable/doubtful players", n_zeroed)
 
+    # --- 3-GW predictions: sum of per-GW predictions with decay ---
+    per_gw_detail: list[pd.DataFrame] = []
+    if data is not None:
+        try:
+            from src.features import get_fixture_context
+            from src.ml.multi_gw import predict_3gw
+
+            fixture_context = get_fixture_context(data)
+            pred_3gw, per_gw_detail = predict_3gw(current, df, fixture_context, latest_gw)
+            if not pred_3gw.empty:
+                result = result.merge(pred_3gw, on="player_id", how="left")
+                log.info("3-GW predictions merged for %d players", len(pred_3gw))
+        except Exception:
+            log.warning("Could not generate 3-GW predictions", exc_info=True)
+
     return {
         "players": result,
         "gameweek": latest_gw,
         "component_details": component_details,
-        "per_gw_detail": [],
+        "per_gw_detail": per_gw_detail,
     }
