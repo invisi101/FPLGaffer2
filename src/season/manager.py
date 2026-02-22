@@ -558,6 +558,7 @@ class SeasonManager:
         transfer_result: dict | None,
         pred_lookup: dict,
         chip_suggestion: str | None,
+        players_df: pd.DataFrame | None = None,
     ) -> None:
         """Run the full multi-GW strategy pipeline and save results."""
         from src.features.builder import get_fixture_context
@@ -587,7 +588,27 @@ class SeasonManager:
         if not future_predictions:
             raise RuntimeError("Multi-GW predictions returned empty")
 
-        # --- Step 2: Enrich with bootstrap data ---
+        # --- Step 2: Replace GW+1 with UI predictions ---
+        # Use the exact same numbers shown in the Predictions tab for GW+1,
+        # so the strategic plan matches the recommendation (like v1 does).
+        if players_df is not None and next_gw in future_predictions:
+            gw1_cols = ["player_id", "predicted_next_gw_points",
+                        "position", "cost", "team_code", "web_name"]
+            if "captain_score" in players_df.columns:
+                gw1_cols.append("captain_score")
+            available_cols = [c for c in gw1_cols if c in players_df.columns]
+            gw1_from_pred = players_df[available_cols].drop_duplicates(
+                "player_id"
+            ).copy()
+            gw1_from_pred["predicted_points"] = gw1_from_pred["predicted_next_gw_points"]
+            gw1_from_pred["confidence"] = 1.0
+            if "team_code" in gw1_from_pred.columns:
+                gw1_from_pred["team"] = (
+                    gw1_from_pred["team_code"].map(code_to_short).fillna("")
+                )
+            future_predictions[next_gw] = gw1_from_pred
+
+        # --- Step 2b: Enrich GW+2 onwards with bootstrap data ---
         enrich_rows = []
         for el in bootstrap.get("elements", []):
             enrich_rows.append({
@@ -599,21 +620,21 @@ class SeasonManager:
             })
         enrich_df = pd.DataFrame(enrich_rows)
 
-        # Also carry over captain_score from 1-GW predictions
-        captain_score_map = {}
-        for pid, pdata in pred_lookup.items():
-            cs = pdata.get("captain_score")
-            if cs:
-                captain_score_map[pid] = cs
-
+        first_pred_gw = min(future_predictions.keys())
         for gw in future_predictions:
+            if gw == next_gw:
+                continue  # Already built from players_df
             gw_df = future_predictions[gw]
             # Merge bootstrap enrichment (only columns not already present)
             merge_cols = [c for c in enrich_df.columns if c not in gw_df.columns or c == "player_id"]
             gw_df = gw_df.merge(enrich_df[merge_cols], on="player_id", how="left")
-            # Add captain_score from 1-GW predictions
+            # captain_score is GW+1 specific (uses Q80 quantile which is
+            # fixture-specific).  For GW+2 onwards, fall back to
+            # predicted_points so the captain planner doesn't use stale Q80.
             if "captain_score" not in gw_df.columns:
-                gw_df["captain_score"] = gw_df["player_id"].map(captain_score_map).fillna(0)
+                gw_df["captain_score"] = gw_df["predicted_points"]
+            else:
+                gw_df["captain_score"] = gw_df["predicted_points"]
             future_predictions[gw] = gw_df
 
         # --- Step 3: Apply availability adjustments ---
@@ -623,14 +644,18 @@ class SeasonManager:
         )
 
         # --- Step 4: Determine available chips ---
-        chips_used = history.get("chips", [])
-        chips_used_names = {c["name"] for c in chips_used}
-        available_chips = ALL_CHIPS - chips_used_names
-        # Handle half-season wildcard reset (WC available again after GW19)
-        if next_gw > 19 and "wildcard" in chips_used_names:
-            wc_events = [c["event"] for c in chips_used if c["name"] == "wildcard"]
-            if all(e <= 19 for e in wc_events):
-                available_chips.add("wildcard")
+        # All 4 chips reset at the half-season boundary (GW20).
+        # Each chip can be used once per half (GW1-19 and GW20-38).
+        chips_used_list = history.get("chips", [])
+        available_chips: set[str] = set()
+        for chip in ALL_CHIPS:
+            chip_events = [c["event"] for c in chips_used_list if c["name"] == chip]
+            if next_gw <= 19:
+                if not any(e <= 19 for e in chip_events):
+                    available_chips.add(chip)
+            else:
+                if not any(e >= 20 for e in chip_events):
+                    available_chips.add(chip)
 
         # --- Step 5: Get fixture calendar from DB ---
         fixture_calendar = self.fixtures.get_fixture_calendar(
@@ -1124,6 +1149,7 @@ class SeasonManager:
                 history, captain_id, captain_name,
                 predicted_points, current_xi_points,
                 transfer_result, pred_lookup, chip_suggestion,
+                players_df,
             )
         except Exception as exc:
             logger.warning("Strategy pipeline failed, using single-GW fallback: %s", exc)
