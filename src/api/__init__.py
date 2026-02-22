@@ -21,7 +21,7 @@ def create_app() -> Flask:
     app.register_blueprint(core_bp)
     app.register_blueprint(team_bp)
     app.register_blueprint(season_bp, url_prefix="/api/season")
-    app.register_blueprint(strategy_bp, url_prefix="/api/season")
+    app.register_blueprint(strategy_bp, url_prefix="/api")
     app.register_blueprint(prices_bp, url_prefix="/api/season")
     app.register_blueprint(backtest_bp)
     app.register_blueprint(compare_bp)
