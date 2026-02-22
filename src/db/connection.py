@@ -10,6 +10,16 @@ from typing import Generator
 from src.paths import DB_PATH
 
 
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    """Create tables if missing (handles mid-run DB deletion)."""
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='season'"
+    ).fetchone()
+    if row is None:
+        from src.db.migrations import apply_migrations
+        apply_migrations(conn)
+
+
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     """Open a SQLite connection with WAL journal mode, FKs, and Row factory.
 
@@ -25,6 +35,7 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    _ensure_schema(conn)
     return conn
 
 

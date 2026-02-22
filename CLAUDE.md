@@ -38,6 +38,11 @@ Never dismiss, reframe, or minimize failing tests. A failing test is a failing t
 - **Port 9874**: Often has leftover processes from previous sessions. Kill with `lsof -ti:9874 | xargs kill -9` before starting
 - **Tests**: `.venv/bin/python -m pytest tests/test_integration.py -v` (17 integration tests)
 - **No build step**: Frontend is a single file at `src/templates/index.html` (inline CSS + JS). Just edit and refresh.
+- **Flush the cache**: When told to flush/clear the cache, delete ALL of the following for a complete clean slate:
+  - `cache/*` — cached FPL API + GitHub CSV data
+  - `output/*` — predictions.csv, predictions_detail.json, season.db
+  - `models/*` — trained .joblib model files
+  - All `__pycache__/` directories throughout the project
 
 ## My Manager ID
 
