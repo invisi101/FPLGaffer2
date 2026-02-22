@@ -155,10 +155,12 @@ def api_my_team():
         "optimized": optimized,
         "bank": bank,
         "free_transfers": free_transfers,
-        "manager_name": f"{entry.get('player_first_name', '')} {entry.get('player_last_name', '')}".strip(),
-        "team_name": entry.get("name", ""),
-        "overall_points": entry.get("summary_overall_points", 0),
-        "overall_rank": entry.get("summary_overall_rank", 0),
+        "manager": {
+            "name": f"{entry.get('player_first_name', '')} {entry.get('player_last_name', '')}".strip(),
+            "team_name": entry.get("name", ""),
+            "overall_points": entry.get("summary_overall_points", 0),
+            "overall_rank": entry.get("summary_overall_rank", 0),
+        },
         "next_gw": get_next_gw(),
     }))
 

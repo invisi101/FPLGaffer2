@@ -7,6 +7,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from src.api.helpers import (
     ELEMENT_TYPE_MAP,
+    get_next_fixtures,
     get_next_gw,
     get_team_map,
     load_bootstrap,
@@ -58,9 +59,69 @@ def api_predictions():
     bootstrap = load_bootstrap()
     team_map = get_team_map()
 
+    # Normalise position column name (CSV may have position_clean)
+    if "position_clean" in pred_df.columns and "position" not in pred_df.columns:
+        pred_df["position"] = pred_df["position_clean"]
+
+    # Enrich with bootstrap data (cost, form, points, team, fixtures)
+    if bootstrap:
+        el_map = {el["id"]: el for el in bootstrap.get("elements", [])}
+        id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
+        for col in ("cost", "team_code", "player_form", "ep_next", "total_points",
+                     "event_points", "ownership", "chance_of_playing"):
+            if col not in pred_df.columns:
+                pred_df[col] = None
+        for idx, row in pred_df.iterrows():
+            el = el_map.get(int(row["player_id"])) if pd.notna(row.get("player_id")) else None
+            if el:
+                if pd.isna(row.get("cost")) or row.get("cost") is None:
+                    pred_df.at[idx, "cost"] = round(el.get("now_cost", 0) / 10, 1)
+                if pd.isna(row.get("team_code")) or row.get("team_code") is None:
+                    pred_df.at[idx, "team_code"] = id_to_code.get(el.get("team"))
+                pred_df.at[idx, "player_form"] = safe_num(el.get("form", 0), 1)
+                pred_df.at[idx, "ep_next"] = safe_num(el.get("ep_next", 0), 1)
+                pred_df.at[idx, "total_points"] = el.get("total_points", 0)
+                pred_df.at[idx, "event_points"] = el.get("event_points", 0)
+                pred_df.at[idx, "ownership"] = safe_num(el.get("selected_by_percent", 0), 1)
+                pred_df.at[idx, "chance_of_playing"] = el.get("chance_of_playing_next_round")
+
     # Enrich with team names
     if "team_code" in pred_df.columns:
         pred_df["team"] = pred_df["team_code"].map(team_map).fillna("")
+
+    # Enrich with next fixtures and FDR
+    fixture_map = get_next_fixtures(3)
+    next_gw = get_next_gw(bootstrap)
+    if fixture_map and "team_code" in pred_df.columns:
+        pred_df["next_3_fixtures"] = pred_df["team_code"].map(
+            lambda tc: ", ".join(fixture_map.get(tc, []))
+        )
+    if bootstrap and next_gw:
+        fixtures_path = CACHE_DIR / "fpl_api_fixtures.json"
+        if fixtures_path.exists():
+            import json as _json
+            all_fixtures = _json.loads(fixtures_path.read_text(encoding="utf-8"))
+            id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
+            code_to_short = {t["code"]: t["short_name"] for t in bootstrap.get("teams", [])}
+            fdr_map = {}
+            home_map = {}
+            opp_map = {}
+            for f in all_fixtures:
+                if f.get("event") == next_gw:
+                    h_code = id_to_code.get(f["team_h"])
+                    a_code = id_to_code.get(f["team_a"])
+                    if h_code:
+                        fdr_map[h_code] = f.get("team_h_difficulty", 3)
+                        home_map[h_code] = True
+                        opp_map[h_code] = code_to_short.get(a_code, "")
+                    if a_code:
+                        fdr_map[a_code] = f.get("team_a_difficulty", 3)
+                        home_map[a_code] = False
+                        opp_map[a_code] = code_to_short.get(h_code, "")
+            if "team_code" in pred_df.columns:
+                pred_df["fdr"] = pred_df["team_code"].map(fdr_map)
+                pred_df["is_home"] = pred_df["team_code"].map(home_map)
+                pred_df["opponent"] = pred_df["team_code"].map(opp_map)
 
     # Apply filters
     position = request.args.get("position")
@@ -76,7 +137,6 @@ def api_predictions():
         pred_df = pred_df.sort_values(sort_by, ascending=False)
 
     records = pred_df.head(500).to_dict(orient="records")
-    next_gw = get_next_gw(bootstrap)
 
     return jsonify({
         "players": scrub_nan(records),
@@ -179,16 +239,47 @@ def api_status():
 
 @core_bp.route("/api/model-info")
 def api_model_info():
-    """Return info about trained models."""
+    """Return info about trained models and data status."""
+    import time
+
     from src.paths import MODEL_DIR
+
+    bootstrap = load_bootstrap()
+    next_gw = get_next_gw(bootstrap)
+
+    # Model files with exists flag
+    expected_models = ["mean_GKP", "mean_DEF", "mean_MID", "mean_FWD",
+                       "quantile_MID", "quantile_FWD"]
     models = []
     if MODEL_DIR.exists():
-        for path in sorted(MODEL_DIR.glob("*.joblib")):
+        existing = {p.stem for p in MODEL_DIR.glob("*.joblib")}
+        for name in expected_models:
             models.append({
-                "name": path.stem,
-                "size_kb": round(path.stat().st_size / 1024, 1),
+                "name": name,
+                "exists": name in existing,
             })
-    return jsonify({"models": models})
+    else:
+        models = [{"name": n, "exists": False} for n in expected_models]
+
+    # Cache age
+    cache_age = None
+    cache_max = 1800  # 30 minutes
+    bootstrap_path = CACHE_DIR / "fpl_api_bootstrap.json"
+    if bootstrap_path.exists():
+        cache_age = int(time.time() - bootstrap_path.stat().st_mtime)
+
+    # Season detection
+    current_season = "2025-2026"
+    available_seasons = ["2024-2025", "2025-2026"]
+
+    return jsonify({
+        "models": models,
+        "next_gw": next_gw,
+        "current_season": current_season,
+        "available_seasons": available_seasons,
+        "cache_age_seconds": cache_age,
+        "cache_max_age_seconds": cache_max,
+    })
 
 
 # ---------------------------------------------------------------------------

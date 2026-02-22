@@ -80,7 +80,7 @@ def get_next_fixtures(n=3):
 
     target_gws = set(range(next_gw, next_gw + n))
     result = {}
-    for f in sorted(fixtures, key=lambda x: (x.get("event", 0), x.get("kickoff_time", ""))):
+    for f in sorted(fixtures, key=lambda x: (x.get("event") or 0, x.get("kickoff_time") or "")):
         if f.get("event") not in target_gws:
             continue
         h_code = id_to_code.get(f["team_h"])
