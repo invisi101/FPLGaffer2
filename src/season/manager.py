@@ -588,6 +588,13 @@ class SeasonManager:
         if not future_predictions:
             raise RuntimeError("Multi-GW predictions returned empty")
 
+        # Drop predictions for current/past GWs — only plan from next_gw onward
+        future_predictions = {
+            gw: gw_df for gw, gw_df in future_predictions.items() if gw >= next_gw
+        }
+        if not future_predictions:
+            raise RuntimeError("No future predictions for GW >= %d" % next_gw)
+
         # --- Step 2: Replace GW+1 with UI predictions ---
         # Use the exact same numbers shown in the Predictions tab for GW+1,
         # so the strategic plan matches the recommendation (like v1 does).
