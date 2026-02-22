@@ -1700,7 +1700,7 @@
     <label>Manager ID:</label>
     <input type="number" class="budget-input" id="cmpManagerId" value="" style="width:120px">
     <label>Gameweek:</label>
-    <input type="number" class="bt-input" id="cmpGW" value="10" min="1" max="38">
+    <input type="number" class="bt-input" id="cmpGW" value="" min="1" max="38" placeholder="GW">
     <button class="btn btn-primary" onclick="runGWCompare()">Compare</button>
   </div>
   <div class="compare-summary" id="cmpSummary"></div>
@@ -2021,6 +2021,27 @@ let taskRunning = false;
 let nextGW = null;
 let lastActionPlanData = null;
 let lockedGWSquad = null;
+const WALDO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 140" width="110" height="140">
+  <rect width="110" height="140" fill="#1a1a2e"/>
+  <circle cx="55" cy="52" r="22" fill="#ffe0bd"/>
+  <rect x="30" y="20" rx="12" ry="8" width="50" height="24" fill="#cc0000"/>
+  <rect x="30" y="24" width="50" height="4" fill="white"/>
+  <rect x="30" y="32" width="50" height="4" fill="white"/>
+  <circle cx="55" cy="10" r="6" fill="#cc0000"/>
+  <circle cx="46" cy="50" r="6" stroke="#333" stroke-width="2" fill="none"/>
+  <circle cx="64" cy="50" r="6" stroke="#333" stroke-width="2" fill="none"/>
+  <line x1="52" y1="50" x2="58" y2="50" stroke="#333" stroke-width="2"/>
+  <line x1="34" y1="50" x2="40" y2="50" stroke="#333" stroke-width="2"/>
+  <line x1="70" y1="50" x2="76" y2="50" stroke="#333" stroke-width="2"/>
+  <path d="M48 62 Q55 68 62 62" stroke="#333" stroke-width="1.5" fill="none"/>
+  <rect x="35" y="74" width="40" height="50" rx="4" fill="#cc0000"/>
+  <rect x="35" y="78" width="40" height="5" fill="white"/>
+  <rect x="35" y="88" width="40" height="5" fill="white"/>
+  <rect x="35" y="98" width="40" height="5" fill="white"/>
+  <rect x="35" y="108" width="40" height="5" fill="white"/>
+  <text x="55" y="134" text-anchor="middle" font-size="10" fill="#888" font-family="sans-serif">Where am I?</text>
+</svg>`;
+const WALDO_DATA_URI = 'data:image/svg+xml,' + encodeURIComponent(WALDO_SVG);
 
 function getColumns() {
   const gwLabel = nextGW ? `GW${nextGW}` : 'GW';
@@ -2127,6 +2148,19 @@ function toggleProgressLog() {
   log.scrollTop = log.scrollHeight;
 }
 
+function friendlyError(msg, fallbackTitle) {
+  const m = (msg || '').toLowerCase();
+  if (m.includes('no cached data') || m.includes('refresh data') || m.includes('bootstrap'))
+    return '<div class="empty-state"><h3>No Data Yet</h3><p>Click <b>Get Latest Data</b> above to fetch FPL data first.</p></div>';
+  if (m.includes('no predictions') || m.includes('train model'))
+    return '<div class="empty-state"><h3>Models Not Trained</h3><p>Click <b>Train Models</b> above to generate predictions.</p></div>';
+  if (m.includes('manager') && (m.includes('required') || m.includes('no current')))
+    return '<div class="empty-state"><h3>Import Your Team</h3><p>Enter your FPL Manager ID and click <b>Import Squad</b> first.</p></div>';
+  if (m.includes('no active season') || m.includes('initialize season'))
+    return '<div class="empty-state"><h3>Start Season Tracking</h3><p>Go to the <b>Season</b> tab and initialize your season first.</p></div>';
+  return `<div class="empty-state"><h3>${fallbackTitle || 'Error'}</h3><p>${msg}</p></div>`;
+}
+
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
@@ -2173,6 +2207,9 @@ function loadModelInfo(afterTask) {
       nextGW = d.next_gw;
       gwBadge.textContent = `Predicting GW${nextGW}`;
       gwBadge.style.color = 'var(--accent)';
+      // Set GW Compare default to previous GW
+      const cmpGW = document.getElementById('cmpGW');
+      if (cmpGW && !cmpGW.value) cmpGW.value = Math.max(1, nextGW - 1);
       // Update best-team dropdown labels
       const sel = document.getElementById('targetSelect');
       sel.options[0].text = `GW${nextGW} Points`;
@@ -2305,7 +2342,9 @@ function loadPLTable() {
 
   fetch('/api/pl-table').then(r => r.json()).then(d => {
     if (d.error) {
-      tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--red)">${d.error}</td></tr>`;
+      const m = (d.error || '').toLowerCase();
+      const msg = (m.includes('no cached') || m.includes('bootstrap')) ? 'Click <b>Get Latest Data</b> above first.' : d.error;
+      tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--text2)">${msg}</td></tr>`;
       return;
     }
     plTableLoaded = true;
@@ -2439,7 +2478,7 @@ function loadGWScores() {
 
   fetch(`/api/gw-scores?gameweek=${gw}`).then(r => r.json()).then(d => {
     if (d.error) {
-      grid.innerHTML = `<div class="empty-state"><p style="color:var(--red)">${d.error}</p></div>`;
+      grid.innerHTML = friendlyError(d.error, 'Scores');
       return;
     }
     if (!d.matches || d.matches.length === 0) {
@@ -2449,7 +2488,7 @@ function loadGWScores() {
     status.textContent = `${d.matches.length} matches`;
     grid.innerHTML = d.matches.map(m => renderMatchCardHtml(m)).join('');
   }).catch(err => {
-    grid.innerHTML = `<div class="empty-state"><p style="color:var(--red)">Error: ${err.message}</p></div>`;
+    grid.innerHTML = friendlyError(err.message, 'Scores');
   });
 }
 
@@ -2472,7 +2511,11 @@ function loadTeamForm() {
 
   fetch('/api/team-form').then(r => r.json()).then(d => {
     if (d.error) {
-      empty.innerHTML = `<p style="color:var(--red)">${d.error}</p>`;
+      const m = (d.error || '').toLowerCase();
+      if (m.includes('no cached') || m.includes('bootstrap') || m.includes('refresh data'))
+        empty.innerHTML = '<h3>No Data Yet</h3><p>Click <b>Get Latest Data</b> above first.</p>';
+      else
+        empty.innerHTML = `<p style="color:var(--red)">${d.error}</p>`;
       return;
     }
     formData = d;
@@ -2740,8 +2783,7 @@ function pickBestTeam() {
     body: JSON.stringify({ budget, target }),
   }).then(r => r.json()).then(d => {
     if (d.error) {
-      document.getElementById('squadDisplay').innerHTML =
-        `<div class="empty-state"><h3>No Solution</h3><p>${d.error}</p></div>`;
+      document.getElementById('squadDisplay').innerHTML = friendlyError(d.error, 'No Solution');
       return;
     }
 
@@ -2844,8 +2886,7 @@ function runGWCompare() {
     body: JSON.stringify({ manager_id: parseInt(managerId), gameweek }),
   }).then(r => r.json()).then(d => {
     if (d.error) {
-      document.getElementById('cmpContent').innerHTML =
-        `<div class="empty-state"><h3>Error</h3><p>${d.error}</p></div>`;
+      document.getElementById('cmpContent').innerHTML = friendlyError(d.error, 'Compare Failed');
       return;
     }
 
@@ -2933,20 +2974,12 @@ function importMyTeam() {
 
   fetch(`/api/my-team?manager_id=${managerId}`).then(r => r.json()).then(d => {
     if (d.error) {
-      // Friendly message when no data has been fetched yet
-      if (d.error.includes('bootstrap') || d.error.includes('Get Latest Data')) {
-        document.getElementById('myTeamDisplay').innerHTML =
-          '<div class="empty-state"><h3>Welcome to FPL Gaffer</h3><p>Get started by clicking <b>Get Latest Data</b> above. Once fetched, click <b>Train Models</b>. After that, <b>Import Squad</b>.</p></div>';
-      } else {
-        document.getElementById('myTeamDisplay').innerHTML =
-          `<div class="empty-state"><h3>Error</h3><p>${d.error}</p></div>`;
-      }
+      document.getElementById('myTeamDisplay').innerHTML = friendlyError(d.error, 'Import Failed');
       return;
     }
     renderMyTeam(d);
   }).catch(err => {
-    document.getElementById('myTeamDisplay').innerHTML =
-      `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
+    document.getElementById('myTeamDisplay').innerHTML = friendlyError(err.message, 'Connection Error');
   });
 }
 
@@ -3145,16 +3178,14 @@ function findTransfers() {
     btn.disabled = false;
     btn.textContent = 'Find Transfers';
     if (d.error) {
-      document.getElementById('transferResults').innerHTML =
-        `<div class="empty-state"><h3>Error</h3><p>${d.error}</p></div>`;
+      document.getElementById('transferResults').innerHTML = friendlyError(d.error, 'Transfer Error');
       return;
     }
     renderTransfers(d);
   }).catch(err => {
     btn.disabled = false;
     btn.textContent = 'Find Transfers';
-    document.getElementById('transferResults').innerHTML =
-      `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
+    document.getElementById('transferResults').innerHTML = friendlyError(err.message, 'Connection Error');
   });
 }
 
@@ -5320,16 +5351,14 @@ function loadPlayersTeams() {
     '<div class="empty-state"><p>Loading teams...</p></div>';
   fetch('/api/players/teams').then(r => r.json()).then(d => {
     if (d.error) {
-      document.getElementById('playersContent').innerHTML =
-        `<div class="empty-state"><h3>Error</h3><p>${d.error}</p></div>`;
+      document.getElementById('playersContent').innerHTML = friendlyError(d.error, 'Players');
       return;
     }
     playersTeamData = d.teams;
     playersView = 'teams';
     showPlayersTeamGrid();
   }).catch(() => {
-    document.getElementById('playersContent').innerHTML =
-      '<div class="empty-state"><h3>Error</h3><p>Failed to load teams.</p></div>';
+    document.getElementById('playersContent').innerHTML = friendlyError('Could not load teams. Click Get Latest Data first.', 'Players');
   });
 }
 
@@ -5371,7 +5400,7 @@ function showTeamRoster(teamId) {
       const statusCls = (p.status === 'i' || p.status === 'u' || p.status === 's') ? ' status-i' : '';
       html += `<div class="roster-player${statusCls}" onclick="showPlayerDetail(${p.id})">
         <img src="https://resources.premierleague.com/premierleague/photos/players/110x140/p${p.code}.png"
-             alt="${p.web_name}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 110 140%22><rect fill=%22%23282a36%22 width=%22110%22 height=%22140%22/><text x=%2255%22 y=%2280%22 fill=%22%238e91a4%22 text-anchor=%22middle%22 font-size=%2232%22>?</text></svg>'">
+             alt="${p.web_name}" onerror="this.src=WALDO_DATA_URI">
         <div class="rp-info">
           <div class="rp-name">${p.web_name}</div>
           <div class="rp-meta">
@@ -5403,8 +5432,7 @@ function showPlayerDetail(playerId) {
     '<div class="empty-state"><p>Loading player...</p></div>';
   fetch(`/api/players/${playerId}/detail`).then(r => r.json()).then(d => {
     if (d.error) {
-      document.getElementById('playersContent').innerHTML =
-        `<div class="empty-state"><h3>Error</h3><p>${d.error}</p></div>`;
+      document.getElementById('playersContent').innerHTML = friendlyError(d.error, 'Player');
       return;
     }
     playersDetailCache[playerId] = d;
@@ -5416,8 +5444,7 @@ function showPlayerDetail(playerId) {
     }
     renderPlayerDetail(d);
   }).catch(() => {
-    document.getElementById('playersContent').innerHTML =
-      '<div class="empty-state"><h3>Error</h3><p>Failed to load player.</p></div>';
+    document.getElementById('playersContent').innerHTML = friendlyError('Could not load player details.', 'Player');
   });
 }
 
@@ -5444,7 +5471,7 @@ function renderPlayerDetail(d) {
     <img class="player-photo-lg"
          src="https://resources.premierleague.com/premierleague/photos/players/110x140/p${p.code}.png"
          alt="${p.web_name}"
-         onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 110 140%22><rect fill=%22%23282a36%22 width=%22110%22 height=%22140%22/><text x=%2255%22 y=%2280%22 fill=%22%238e91a4%22 text-anchor=%22middle%22 font-size=%2232%22>?</text></svg>'">
+         onerror="this.src=WALDO_DATA_URI">
     <div class="player-header-info">
       <h2>${p.first_name} ${p.second_name}</h2>
       <div class="player-team-line">
@@ -5774,26 +5801,6 @@ function closeHelp() { document.getElementById('helpOverlay').style.display = 'n
 // ---------------------------------------------------------------------------
 // Monsters Tab
 // ---------------------------------------------------------------------------
-const WALDO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 140" width="110" height="140">
-  <rect width="110" height="140" fill="#1a1a2e"/>
-  <circle cx="55" cy="52" r="22" fill="#ffe0bd"/>
-  <rect x="30" y="20" rx="12" ry="8" width="50" height="24" fill="#cc0000"/>
-  <rect x="30" y="24" width="50" height="4" fill="white"/>
-  <rect x="30" y="32" width="50" height="4" fill="white"/>
-  <circle cx="55" cy="10" r="6" fill="#cc0000"/>
-  <circle cx="46" cy="50" r="6" stroke="#333" stroke-width="2" fill="none"/>
-  <circle cx="64" cy="50" r="6" stroke="#333" stroke-width="2" fill="none"/>
-  <line x1="52" y1="50" x2="58" y2="50" stroke="#333" stroke-width="2"/>
-  <line x1="34" y1="50" x2="40" y2="50" stroke="#333" stroke-width="2"/>
-  <line x1="70" y1="50" x2="76" y2="50" stroke="#333" stroke-width="2"/>
-  <path d="M48 62 Q55 68 62 62" stroke="#333" stroke-width="1.5" fill="none"/>
-  <rect x="35" y="74" width="40" height="50" rx="4" fill="#cc0000"/>
-  <rect x="35" y="78" width="40" height="5" fill="white"/>
-  <rect x="35" y="88" width="40" height="5" fill="white"/>
-  <rect x="35" y="98" width="40" height="5" fill="white"/>
-  <rect x="35" y="108" width="40" height="5" fill="white"/>
-  <text x="55" y="134" text-anchor="middle" font-size="10" fill="#888" font-family="sans-serif">Where am I?</text>
-</svg>`;
 let _monstersLoaded = false;
 
 function loadMonsters() {
@@ -5803,13 +5810,13 @@ function loadMonsters() {
 
   fetch('/api/monsters').then(r => r.json()).then(d => {
     if (d.error) {
-      container.innerHTML = `<div class="empty-state"><h3>No Monsters Yet</h3><p>${d.error}</p></div>`;
+      container.innerHTML = friendlyError(d.error, 'No Monsters Yet');
       return;
     }
     _monstersLoaded = true;
     renderMonsters(d.categories);
   }).catch(err => {
-    container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
+    container.innerHTML = friendlyError(err.message, 'Monsters');
   });
 }
 
@@ -5844,7 +5851,7 @@ function renderMonsters(categories) {
       html += `<div class="monster-card rank-${rank}">
         <div class="monster-rank-badge">${rank}</div>
         <img class="monster-photo" src="${photoUrl}"
-             onerror="this.src='data:image/svg+xml,${encodeURIComponent(WALDO_SVG)}'"
+             onerror="this.src=WALDO_DATA_URI"
              alt="${p.web_name}">
         <div class="monster-name">${p.web_name}</div>
         <div class="monster-team-row">
