@@ -233,6 +233,16 @@ class RecommendationRepository:
             ).fetchone()
         return dict(row) if row else None
 
+    def update_chip_suggestion(
+        self, season_id: int, gameweek: int, chip: str | None,
+    ) -> None:
+        with connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE recommendation SET chip_suggestion=? WHERE season_id=? AND gameweek=?",
+                (chip, season_id, gameweek),
+            )
+            conn.commit()
+
 
 # ---------------------------------------------------------------------------
 # OutcomeRepository

@@ -85,11 +85,11 @@ class CaptainPlanner:
             captain = xi.iloc[0]
             vc = xi.iloc[1] if len(xi) > 1 else captain
 
-            captain_pts = captain["predicted_points"]
-            confidence = captain.get("confidence", 1.0)
+            captain_pts = float(captain["predicted_points"])
+            confidence = float(captain.get("confidence", 1.0))
 
             # Flag weak captain GWs (captain predicted < 4 pts)
-            weak_gw = captain_pts < 4.0
+            weak_gw = bool(captain_pts < 4.0)
 
             captain_plan.append({
                 "gw": gw,

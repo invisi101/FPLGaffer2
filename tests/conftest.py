@@ -83,3 +83,58 @@ def bootstrap_data():
 def tmp_db(tmp_path):
     """Temporary database path for DB tests."""
     return tmp_path / "test_season.db"
+
+
+# ---------------------------------------------------------------------------
+# Strategy pipeline fixtures
+# ---------------------------------------------------------------------------
+
+def _build_gw_predictions(base_df: pd.DataFrame, gw: int, decay: float = 1.0) -> pd.DataFrame:
+    """Build a future-predictions DataFrame for a single GW."""
+    gw_df = base_df[["player_id", "web_name", "position", "cost", "team_code"]].copy()
+    gw_df["predicted_points"] = base_df["predicted_next_gw_points"] * decay
+    gw_df["captain_score"] = base_df["captain_score"] * decay
+    gw_df["confidence"] = round(0.95 ** max(0, gw - 3), 4)
+    return gw_df
+
+
+@pytest.fixture
+def future_predictions(sample_players_df):
+    """Dict of {gw: DataFrame} spanning GW3..GW7 for strategy tests."""
+    return {
+        gw: _build_gw_predictions(sample_players_df, gw, decay=0.95 ** (gw - 3))
+        for gw in range(3, 8)
+    }
+
+
+@pytest.fixture
+def current_squad_ids():
+    """First 15 player IDs as the current squad."""
+    return {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+
+
+@pytest.fixture
+def fixture_calendar():
+    """Fixture calendar rows for GW3..GW10 across 10 teams."""
+    rows = []
+    for gw in range(3, 11):
+        for team_id in range(1, 11):
+            is_dgw = 1 if (gw == 5 and team_id <= 4) else 0
+            is_bgw = 1 if (gw == 7 and team_id > 8) else 0
+            rows.append({
+                "gameweek": gw,
+                "team_id": team_id,
+                "team_code": team_id,
+                "team_short": f"T{team_id:02d}",
+                "fixture_count": 2 if is_dgw else (0 if is_bgw else 1),
+                "is_dgw": is_dgw,
+                "is_bgw": is_bgw,
+                "fdr_avg": 2.5 if team_id <= 3 else 3.5,
+            })
+    return rows
+
+
+@pytest.fixture
+def available_chips():
+    """All 4 chips available."""
+    return {"wildcard", "freehit", "bboost", "3xc"}
