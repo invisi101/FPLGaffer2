@@ -127,7 +127,7 @@ def build_own_team_rolling_features(team_stats: pd.DataFrame) -> pd.DataFrame:
     agg = agg.sort_values(["team_code", "gameweek"])
 
     result_frames = [agg[["team_code", "gameweek"]]]
-    for window in [3, 5]:
+    for window in OPPONENT_ROLLING_WINDOWS:
         for col in available:
             feat_name = f"team_{col}_last{window}"
             rolled = (

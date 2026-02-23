@@ -88,7 +88,7 @@ def build_ewm_features(pms: pd.DataFrame) -> pd.DataFrame:
     result = agg[["player_id", "gameweek"]].copy()
     for col in available:
         # Map raw stat name to the feature name used in DEFAULT_FEATURES
-        feat_name = f"ewm_player_{col}_last3"
+        feat_name = f"ewm_player_{col}_ewm5"
         result[feat_name] = (
             agg.groupby("player_id")[col]
             .transform(lambda s: s.shift(1).ewm(span=EWM_SPAN, min_periods=1).mean())

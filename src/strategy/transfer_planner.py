@@ -370,8 +370,6 @@ class MultiWeekPlanner:
                 step = self._simulate_chip_gw(
                     gw, gw_chip, gw_df, squad_ids, budget, ft,
                 )
-                if step is None:
-                    return None
                 path.append(step)
 
                 if gw_chip == "wildcard":
@@ -397,8 +395,6 @@ class MultiWeekPlanner:
                     solve_transfer_fn, late_season=late_season,
                     rank_chasing=rank_chasing,
                 )
-                if step is None:
-                    return None
                 path.append(step)
 
                 actual_transfers = step["ft_used"]

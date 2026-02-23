@@ -866,53 +866,53 @@ final_model.fit(
 
 ### LOW PRIORITY — Minor Code Concerns
 
-#### L1. days_rest, fixture_congestion, chance_of_playing Not in FEATURE_FILL_DEFAULTS
+#### ~~L1. days_rest, fixture_congestion, chance_of_playing Not in FEATURE_FILL_DEFAULTS~~ FIXED
 
 **Problem**: These features use ad-hoc `.fillna()` instead of the central config. Not a bug, but inconsistent with the pattern.
 
-**Fix**: Add to `FEATURE_FILL_DEFAULTS` in `config.py`: `"days_rest": 7.0`, `"fixture_congestion": 0.143`, `"chance_of_playing": 100.0`.
+**Fix**: Added to `FEATURE_FILL_DEFAULTS` in `config.py`: `"days_rest": 7.0`, `"fixture_congestion": 0.143`, `"chance_of_playing": 100.0`.
 
-#### L2. fdr fillna Duplicated
+#### ~~L2. fdr fillna Duplicated~~ FIXED
 
 **Problem**: FDR fillna applied in two places — redundant but not harmful.
 
-**Fix**: Remove the builder-level fill, let `FEATURE_FILL_DEFAULTS` handle it.
+**Fix**: Removed the builder-level fill; `FEATURE_FILL_DEFAULTS` handles it.
 
-#### L3. Dead Code in _simulate_chip_gw
+#### ~~L3. Dead Code in _simulate_chip_gw~~ FIXED
 
-**Problem**: `transfer_planner.py` None-return check can never be reached due to upstream logic.
+**Problem**: `transfer_planner.py` None-return checks can never be reached due to upstream logic.
 
-**Fix**: Remove the dead check or add a comment explaining it's defensive.
+**Fix**: Removed dead `if step is None: return None` checks.
 
-#### L4. Own-Team Rolling Windows Hardcoded
+#### ~~L4. Own-Team Rolling Windows Hardcoded~~ FIXED
 
 **Problem**: `team_stats.py` uses hardcoded `[3, 5]` instead of a config constant. Works correctly but isn't configurable.
 
-**Fix**: Import rolling windows from config.
+**Fix**: Now uses `OPPONENT_ROLLING_WINDOWS` from config (already imported).
 
-#### L5. EWM Feature Naming Misnomer
+#### ~~L5. EWM Feature Naming Misnomer~~ FIXED
 
 **Problem**: Features named `_last3` suffix but EWM uses `span=5`. Misleading but no functional impact.
 
-**Fix**: Rename to `_ewm5` or `_ewm` suffix. Would require retraining models and updating feature lists.
+**Fix**: Renamed to `_ewm5` suffix in `player_rolling.py` and all references in `config.py` (DEFAULT_FEATURES, SUB_MODEL_FEATURES, FEATURE_LABELS). Requires model retraining.
 
-#### L6. Saves Sub-Model May Be Overdispersed for Poisson
+#### ~~L6. Saves Sub-Model May Be Overdispersed for Poisson~~ FIXED
 
-**Problem**: Save counts (3-5 per match) have higher variance than Poisson expects. Negative Binomial might fit better, but impact is small since GKP predictions are less important for captaincy/transfers.
+**Problem**: Save counts (3-5 per match) have higher variance than Poisson expects.
 
-**Fix**: Low priority. Could experiment with Negative Binomial objective.
+**Fix**: Changed saves objective from `count:poisson` to `reg:squarederror` in `DecomposedConfig`. Requires model retraining.
 
-#### L7. Bonus Sub-Model Uses Poisson for Bounded 0-3 Data
+#### ~~L7. Bonus Sub-Model Uses Poisson for Bounded 0-3 Data~~ FIXED
 
-**Problem**: Bonus points are bounded at 0-3 but modeled with Poisson (unbounded). Distribution mismatch is mild since E[bonus] stays in valid range.
+**Problem**: Bonus points are bounded at 0-3 but modeled with Poisson (unbounded).
 
-**Fix**: Could experiment with `reg:squarederror` for bonus sub-model and compare via backtest.
+**Fix**: Changed bonus objective from `count:poisson` to `reg:squarederror` in `DecomposedConfig`. Requires model retraining.
 
-#### L8. GKP Feature-to-Sample Ratio (~1:43)
+#### ~~L8. GKP Feature-to-Sample Ratio (~1:43)~~ FIXED
 
-**Problem**: GKP has ~500 training rows but many features. Potential overfitting risk, though XGBoost regularization and walk-forward CV mitigate this.
+**Problem**: GKP had 40 features for ~1,500 training rows (~1:38 ratio). Potential overfitting risk.
 
-**Fix**: Prune low-importance features for GKP. Drop features with <1% importance.
+**Fix**: Pruned 8 low-importance features (gw_influence, season_progress, transfer_momentum, fixture_congestion, transfers_in_event, net_transfers). Down to 32 features (~1:47 ratio). Requires model retraining.
 
 #### L9. 85/15 Ensemble Blend Not Empirically Optimized
 
@@ -932,11 +932,11 @@ final_model.fit(
 
 **Fix**: Integrate price predictions into transfer planner scoring.
 
-#### L12. CLAUDE.md Documentation Inconsistency
+#### ~~L12. CLAUDE.md Documentation Inconsistency~~ FIXED
 
-**Problem**: Audit checklist says "Bench weight (0.1)" but config has `bench_weight=0.25`.
+**Problem**: Audit checklist said "Bench weight (0.1)" but config has `bench_weight=0.25`.
 
-**Fix**: Update the audit checklist text.
+**Fix**: Corrected — the old audit checklist text has been replaced.
 
 ---
 

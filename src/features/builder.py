@@ -351,10 +351,6 @@ def _assemble_features(
         opp_elo = elo.rename(columns={"team_code": "opponent_code", "team_elo": "opponent_elo"})
         df = df.merge(opp_elo, on="opponent_code", how="left")
 
-    # Fill missing FDR with neutral
-    if "fdr" in df.columns:
-        df["fdr"] = df["fdr"].fillna(3.0)
-
     # Multi-GW lookahead features
     if not next3.empty:
         df = df.merge(next3, on=["team_code", "gameweek"], how="left")
