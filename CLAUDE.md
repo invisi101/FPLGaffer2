@@ -596,23 +596,43 @@ gw_mins["played"] = gw_mins["minutes_played"] > 0
 # Kill leftover server
 lsof -ti:9874 | xargs kill -9
 
-# Run all tests
-.venv/bin/python -m pytest tests/test_integration.py -v
+# Run all tests (99 total, ~5 min)
+.venv/bin/python -m pytest tests/ -v
+
+# Run fast tests only (~1 sec)
+.venv/bin/python -m pytest tests/test_correctness.py tests/test_integration.py -v
 
 # Start server
 FLASK_APP=src.api .venv/bin/python -m flask run --port 9874
 ```
 
-### Test Structure (`tests/test_integration.py`)
-17 tests covering:
+### Test Structure (3 files, 99 tests)
+
+**`test_correctness.py`** (53 tests, <1 sec) — Mathematical correctness and FPL compliance:
+- Config sanity: decay curve, ensemble weights, captain weights, squad positions, FPL scoring rules, soft caps, DefCon thresholds
+- Decomposed scoring formula: P(plays) logic, appearance points, goal/CS/GC/saves/DefCon formulas, soft cap math, DGW summing
+- Ensemble blend: weighted average, boundary properties, mean model dominance
+- Captain score: formula values, Q80 weighting, NaN fallback, doubling mechanics
+- Confidence decay: monotonicity, bounds, fallback consistency
+- Solver FPL compliance: full rule validation on 30-player pool, captain constraints, transfer keeping, hit cost arithmetic, baseline existence
+- Prediction properties: no negatives, availability zeroing, 3-GW re-zeroing after merge
+
+**`test_integration.py`** (17 tests, ~1 sec) — Smoke tests:
 - Flask app creation and route registration
 - API endpoints (predictions, model-info, season/status)
 - MILP solver (squad, transfers, captain)
 - FPL rules validation (squad count, team limits)
 - Database schema creation and CRUD
-- Feature registry (position-specific features)
-- Config loading (all dataclass configs)
-- Module imports (all 69 source modules import without error)
+- Feature registry, config loading, module imports
+
+**`test_strategy_pipeline.py`** (29 tests, ~5 min) — Strategy layer behaviour:
+- ChipEvaluator: heatmap, per-GW values, BB in DGW, empty chips, synergies
+- MultiWeekPlanner: plan steps, horizon, squad IDs, zero FT, rationale, empty predictions
+- CaptainPlanner: coverage, captain in squad, required fields, transfer plan squads, VC != captain
+- PlanSynthesizer: required keys, timeline merges, no duplicate chip GWs, JSON serialisable
+- Availability: injured zeroed all GWs, doubtful first GW only, healthy unchanged
+- Plan invalidation: injury triggers, captain drop triggers, no triggers when healthy
+- Full pipeline: valid plan, injuries adjust captaincy, DB storage roundtrip
 
 ### Key test commands
 ```bash
@@ -682,78 +702,153 @@ All path references go through `src.paths` — no module should compute its own 
 
 ## Full Audit Prompt
 
-When the user says **"run full audit"**, execute the following comprehensive audit. Use parallel agents to cover all areas simultaneously. Dispatch at least 4 agents covering: (1) Solver + FPL Rules, (2) Features + Data Leakage, (3) ML Pipeline + Predictions, (4) Strategy + Season + API.
+When the user says **"run full audit"**, execute the following comprehensive audit covering **code correctness, mathematical soundness, FPL domain intelligence, and improvement opportunities**. This is not just a bug hunt — it evaluates whether the system would make good FPL decisions in practice.
 
-### Mindset
+### Phase 1: Automated Verification (Run First — Blocks Everything Else)
 
-You are an FPL manager who has entrusted this app with your entire season. Every recommendation must be correct. A single logic bug can cost hundreds of points. Audit as if your mini-league title depends on it.
+```bash
+.venv/bin/python -m pytest tests/ -v
+```
 
-### What to check
+All tests must pass. If any fail, fix them before proceeding. The test suite covers:
+- `test_correctness.py` (53 tests) — FPL scoring formulas, ensemble blend math, captain score, confidence decay, solver FPL compliance, prediction properties
+- `test_integration.py` (17 tests) — Flask app, API routes, solver smoke tests, DB, config, imports
+- `test_strategy_pipeline.py` (29 tests) — ChipEvaluator, MultiWeekPlanner, CaptainPlanner, PlanSynthesizer, availability, plan invalidation, full E2E
 
-**1. FPL Rule Compliance** — Trace each rule to the code that handles it:
-- FT banking: +1 per GW, max 5, cost -4 per extra transfer (see `_calculate_free_transfers` in manager.py)
-- Chips: WC and FH preserve FTs (no reset, no accrual). BB/TC one-GW only. Half-season boundary at GW20.
-- Captain: doubles points. Vice-captain activates only if captain gets 0 minutes.
-- Squad: 15 players, 2/5/5/3, max 3 per team. Formation: 1 GKP, 3-5 DEF, 2-5 MID, 1-3 FWD.
+### Phase 2: Code Correctness (Dispatch 3 Parallel Agents)
 
-**2. Data Leakage** — Every feature must only use GW N-1 and earlier data when predicting GW N+1. Check `shift(1)` on all rolling calculations in `features/`.
+#### Agent 1: Data & Features
 
-**3. Off-by-One Errors** — Verify gameweek offsets, loop bounds, cross-season boundaries.
+Read every file in `src/features/` and `src/data/`. Check:
 
-**4. State Tracking Across Multi-Step Simulations** — The transfer planner, chip evaluator, and season manager all simulate multiple GWs. Check:
-- Budget preserved correctly (not shrinking when solver picks cheaper squad)
-- FTs tracked per FPL rules (banking, spending, chip effects)
-- Squad updates correctly (WC: permanent. FH: reverts. Normal: permanent.)
+- **Data leakage**: Every feature must only use GW N-1 and earlier when predicting GW N+1. Trace `shift(1)` on all rolling/expanding/cumulative calculations. Check merge keys.
+- **NaN handling**: Consistent fill defaults from `FEATURE_FILL_DEFAULTS`. No silent NaN propagation into model inputs.
+- **DGW targets**: Target variables divided by `next_gw_fixture_count` so DGW matches don't get double-counted during training.
+- **Rolling windows**: Verify 3-GW and 5-GW windows use correct slice boundaries. No off-by-one.
+- **Interaction features**: `xg_x_opp_goals_conceded`, `chances_x_opp_big_chances`, `cs_opportunity` — verify formulas match intent and don't use stale opponent data.
+- **Cross-season boundaries**: GW 1 of season 2 correctly follows GW 38 of season 1. Rolling stats reset or carry over correctly.
 
-**5. Hardcoded Values** — Check for magic numbers that should be in `config.py`.
+#### Agent 2: ML Pipeline & Predictions
 
-**6. DGW/BGW Handling** — Stats summed (not averaged) for DGW. BGW teams handled gracefully.
+Read `src/ml/prediction.py`, `src/ml/multi_gw.py`, `src/ml/decomposed.py`, `src/ml/training.py`. Check:
 
-**7. Injury/Availability Propagation** — THIS IS THE #1 BUG-PRONE AREA. Check:
-- ALL prediction columns zeroed (predicted_next_gw_points, captain_score, prediction_low/high)
-- 3-GW predictions re-zeroed AFTER the merge (they come from multi_gw.py which doesn't know about availability)
-- In strategy pipeline: `apply_availability_adjustments()` applied to all future GWs
-- Injured players excluded from transfer recommendations AND captain picks
+- **Ensemble blend**: 85/15 mean/decomposed, weighted correctly. `_ensemble_predict_position` merges with `how="outer"` — verify no player is dropped.
+- **Availability zeroing**: ALL prediction columns zeroed for unavailable players. **CRITICAL**: 3-GW predictions re-zeroed AFTER the merge (they come from `multi_gw.py` which doesn't know about availability).
+- **DGW prediction summing**: Per-fixture predictions summed, not averaged. Both `predict_for_position` and `predict_decomposed` handle this.
+- **Multi-GW snapshots**: `_build_offset_snapshot` correctly swaps fixture/opponent columns for each future GW. Interaction features recomputed. Lookahead features (avg_fdr_next3, etc.) recomputed relative to target GW.
+- **Confidence decay**: Uses `PredictionConfig.confidence_decay` tuple from config. Falls back correctly for offsets beyond tuple length.
+- **Prediction intervals**: Binned by prediction magnitude. Bounds are reasonable (low >= 0).
+- **Decomposed scoring formula**: P(plays) gating, P(60+) for CS/GC, Poisson CDF for DefCon, soft caps. Compare formula against actual FPL scoring rules line by line.
 
-**8. generate_recommendation() Orchestration** — Verify the flow:
-- Strategy pipeline runs FIRST (not after single-GW solver)
-- GW+1 extracted from timeline (not computed separately)
-- Single-GW solver is ONLY the fallback
-- Budget uses entry_history["value"], not sum(now_cost)
-- Chip plan from heatmap is passed to MultiWeekPlanner
-- Plan changelog detects chip reschedules and captain changes
+#### Agent 3: Solver, Strategy & Season
 
-**9. Solver Fallbacks** — Every place the MILP solver is called in the strategy pipeline must handle `None` returns gracefully (solver can fail to find feasible solution). In particular:
-- `_simulate_chip_gw()` in transfer_planner.py must not return None
-- ChipEvaluator chip simulation must not abort on solver failure
-- Bank-vs-use analysis must handle solver returning None
+Read `src/solver/`, `src/strategy/`, `src/season/manager.py`. Check:
 
-**10. Database Integrity** — No orphaned rows. Correct season_id/manager_id filtering. price_tracker includes season_id in returned dicts.
+- **FPL rules in solver**: 15 players, 2/5/5/3, max 3 per team, formation limits, budget, captain is a starter.
+- **Transfer hit counting**: Forced replacements (unavailable players dropped by `dropna`) not counted as paid hits.
+- **State tracking**: FTs, budget, squad across multi-GW simulation. WC=permanent, FH=reverts, BB/TC=one-GW.
+- **`generate_recommendation()` flow**: Strategy pipeline runs FIRST, GW+1 extracted from timeline, single-GW solver is ONLY the fallback. Budget uses `entry_history["value"]`.
+- **Solver fallbacks**: Every MILP call handles `None` returns. `_simulate_chip_gw()` falls back to current squad points.
+- **Chip evaluation**: BB in DGW, FH in BGW, WC over 3-GW window. Synergies don't cross half-season boundary.
+- **Database integrity**: Correct season_id/manager_id filtering. price_tracker includes season_id.
+- **Frontend/backend contract**: predictions.csv has `position_clean` not `position` — must alias. No `cost` column — must enrich from bootstrap.
 
-**11. MILP Solver Correctness** — Captain bonus, bench weight, all constraints correct. Validator trusts solver's hit count (not recomputed from set differences).
+### Phase 3: Mathematical & Statistical Foundations (Dispatch 2 Parallel Agents)
 
-**12. Frontend/Backend Contract** — Every field the frontend reads is returned by the backend. Key gotchas:
-- predictions.csv has `position_clean` not `position` — must alias
-- predictions.csv has no `cost` column — must enrich from bootstrap
-- `event_points` is raw (not captain-doubled) — must apply multiplier
+#### Agent 4: Model Architecture & Feature Engineering
+
+Question whether the mathematical choices are sound. Don't just check for bugs — evaluate whether the approach is optimal.
+
+- **Distribution choices**:
+  - Poisson for goals (range 0-4, low lambda ~0.1-0.3): Appropriate? Or is Negative Binomial better for overdispersion?
+  - Poisson for saves (range 0-10, higher lambda): Still count data, but more variance.
+  - Poisson for DefCon CBIT (range 0-20+): May be overdispersed. Does the Poisson CDF produce calibrated probabilities?
+  - squarederror for CS: Correct — CS is effectively a probability (DGW makes it fractional).
+  - Are there components where the wrong objective is used?
+
+- **Feature engineering quality**:
+  - Rolling windows (3, 5 GW): Too short = noisy, too long = stale. Are these optimal for Premier League data?
+  - EWM span=5: Is this the right decay rate? Does it add value over simple rolling?
+  - Interaction features (xG x opp_GC, chances x opp_big_chances): Are these the right interactions? What about xA x opp_GC?
+  - Feature count per position (GKP ~30, DEF ~40, MID ~50, FWD ~40): Overfitting risk with ~500 training GWs per position?
+  - Which features have highest importance? Are any dead weight?
+
+- **Ensemble architecture**:
+  - 85/15 blend: Empirically justified? What would the backtest say about 80/20 or 90/10?
+  - Simple weighted average: Is this optimal? Alternatives: stacking, switching based on confidence.
+  - When does the decomposed model outperform mean? (Rotation/bench players where component breakdown matters)
+
+#### Agent 5: Calibration, Weights & Hyperparameters
+
+Quantitative review of every tunable parameter.
+
+- **Calibration**: Is the model well-calibrated? (predicted 5 pts => actual ~5 pts). Known overprediction at high end.
+- **Soft caps** (GKP=7, DEF=8, MID=10, FWD=10): Suppressing genuine haul predictions? How often does the model predict above cap? Should caps be DGW-aware (higher cap for DGW)?
+- **Confidence decay** (0.95, 0.93, 0.90, 0.87, 0.83, 0.80, 0.77): Too aggressive or conservative? Should it vary by position (FWD may decay faster due to rotation)?
+- **Captain formula** (0.4 mean + 0.6 Q80): Right balance? Only MID/FWD have Q80 models — should DEF/GKP be eligible for captaincy scoring?
+- **XGBoost hyperparameters** (150 trees, depth 5, lr 0.1): Overfitting or underfitting? Walk-forward with 20 splits — enough data per fold?
+- **Sample weighting** (current season 1.0, previous 0.5): Helping? What about 0.7/0.3?
+- **Bench weight** (0.1): Does this produce good benches? Too low = terrible bench players. Too high = starters suffer. What's the optimal weight considering auto-subs?
+
+### Phase 4: FPL Domain Intelligence (1 Agent)
+
+#### Agent 6: Think Like an Elite FPL Manager
+
+Don't just check if the code works. Ask: **would a top-1000 FPL manager make these same decisions?**
+
+- **Captain picks**: Is the system picking the highest-EV captain? Too conservative (always Salah/Haaland) or too bold? Are DGW captains valued correctly (should be ~2x, not just "best player")?
+- **Transfer timing**: Does the system sell before price drops and buy before rises? Is the price prediction model actually profitable, or is it noise?
+- **Chip timing**:
+  - BB: Saved for DGWs? Is DGW detection working?
+  - TC: Saved for DGW premium players? Or just best single-GW pick?
+  - FH: Used in BGWs? Or to navigate bad fixture clusters?
+  - WC: Reshaping squad before fixture swings? Or just fixing a bad squad?
+- **Fixture awareness**: Is FDR actually predictive? Are "easy" fixtures really easier? (Check backtest `by_difficulty` diagnostic when available)
+- **Rotation risk**: Is the system accounting for rotation? A player who plays 60 mins every other game is less valuable than one who plays 90 every game. How well does `availability_rate_last5` capture this?
+- **Differential thinking**: Should the system consider ownership? In mini-league context, differentials matter. In OR context, they don't. Is there a toggle?
+- **Hit tolerance**: Is -4 per hit always the right cost? A hit that brings in a player for 5 good fixtures is different from one that helps for 1 GW. Does the 5-GW planner account for this?
+- **Form vs fixtures**: Is the model balancing recent form against upcoming fixtures correctly? A player in great form with hard fixtures — what happens?
+- **Bench order**: Is auto-sub optimisation considered? The 4th-sub rule (GKP only replaces GKP) affects optimal bench composition.
+
+### Phase 5: Improvement Discovery (1 Agent)
+
+#### Agent 7: What's the Biggest Opportunity?
+
+Based on everything above, identify the **top 3 improvements** ranked by expected points gained per season:
+
+Categories to consider:
+- **Feature ideas**: xA x opp_GC, xG overperformance (goals - xG), progressive carries, set piece taker identification, manager rotation patterns, team strength relative model
+- **Model ideas**: LightGBM comparison, model stacking instead of simple blend, position-specific hyperparameters, time-series features (form trajectory)
+- **Captain improvements**: Bayesian captain selection, variance-aware captaincy, fixture-specific captain history analysis
+- **Transfer improvements**: Price change integration into transfer timing, multi-week transfer chaining (buy A to fund C via selling B)
+- **Strategic improvements**: Mini-league differential mode, rank-chasing mode (late season), template team awareness, auto-sub optimisation
 
 ### Previously Found Bug Patterns (Check for Recurrence)
 
-These bugs have been found and fixed before. When auditing, specifically check that these patterns haven't been reintroduced:
+These bugs have been found and fixed. Specifically verify they haven't been reintroduced:
 
 | Pattern | Where to Check | What Goes Wrong |
 |---------|---------------|-----------------|
 | Availability zeroing before 3-GW merge | `ml/prediction.py` | Injured players get non-zero 3-GW predictions |
-| Budget using now_cost sum | `season/manager.py` generate_recommendation | Budget ~5% too high, solver picks unaffordable squads |
-| Single-GW solver as primary path | `season/manager.py` generate_recommendation | Loses multi-GW planning intelligence |
+| Budget using now_cost sum | `season/manager.py` generate_recommendation | Budget ~5% too high |
+| Single-GW solver as primary path | `season/manager.py` generate_recommendation | Loses multi-GW intelligence |
 | Chip plan not passed to planner | `season/manager.py` _run_strategy_pipeline | Planner ignores chip schedule |
-| Solver failure kills planning | `strategy/transfer_planner.py` | One bad GW aborts the entire 5-GW plan |
+| Solver failure kills planning | `strategy/transfer_planner.py` | One bad GW aborts entire 5-GW plan |
 | Hit cost recomputed from sets | `solver/validator.py` | Forced replacements counted as paid hits |
 | Watchlist excluded from prices | `season/manager.py` _track_prices | Price alerts miss watched players |
 | pandas CoW without .copy() | `features/playerstats.py` | Silent data corruption |
 
-### Output format
-For each issue: Severity (Critical/High/Medium), File:line, What's wrong, Expected behavior, Suggested fix.
+### Output Format
+
+For each finding:
+1. **Category**: Bug / Mathematical Issue / FPL Domain Issue / Improvement Opportunity
+2. **Severity/Impact**: Critical / High / Medium (for bugs) or Expected Points Impact (for improvements)
+3. **File:line** (for code issues)
+4. **What's wrong / What could be better**
+5. **Evidence** (why you believe this is an issue — cite code, math, or FPL theory)
+6. **Suggested fix / approach**
+
+**Final synthesis**: Top 5 highest-impact actions ranked by expected improvement to season performance. Group as: Must Fix (bugs), Should Investigate (mathematical/strategic questions), Could Explore (improvement ideas).
 
 ---
 
