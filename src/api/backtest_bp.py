@@ -21,6 +21,8 @@ def api_backtest():
     seasons = body.get("seasons")
 
     def do_backtest():
+        import json as _json
+
         from src.data.loader import load_all_data
         from src.features.builder import build_features
         from src.ml.backtest import run_backtest
@@ -29,10 +31,25 @@ def api_backtest():
         data = load_all_data()
         df = build_features(data)
 
+        total_gws = end_gw - start_gw + 1
+
+        def on_gw_complete(gw_result):
+            gw = gw_result["gw"]
+            idx = gw - start_gw + 1
+            broadcast(
+                f"GW {gw} complete ({idx}/{total_gws})",
+                event="progress",
+            )
+            broadcast(
+                _json.dumps(gw_result),
+                event="backtest_gw",
+            )
+
         broadcast("Running backtest...", event="progress")
         results = run_backtest(
             df, start_gw=start_gw, end_gw=end_gw,
             seasons=seasons,
+            progress_callback=on_gw_complete,
         )
         sse_module.backtest_results = results
 

@@ -311,6 +311,7 @@ def _run_season_backtest(
     start_gw: int,
     end_gw: int,
     season: str,
+    progress_callback=None,
 ) -> tuple[list[dict], pd.DataFrame]:
     """Walk-forward backtest for a single season.
 
@@ -592,6 +593,9 @@ def _run_season_backtest(
             "pos_mae": pos_maes,
         }
         gameweek_results.append(gw_result)
+
+        if progress_callback:
+            progress_callback(gw_result)
 
         # Collect raw prediction data for diagnostics
         diag_df = pred_df[[
@@ -932,6 +936,7 @@ def run_backtest(
     end_gw: int = 25,
     season: str = "",
     seasons: list[str] | None = None,
+    progress_callback=None,
 ) -> dict:
     """Run walk-forward backtest with per-GW model retraining.
 
@@ -960,7 +965,7 @@ def run_backtest(
 
     for s in season_list:
         log.info("  --- Season %s ---", s)
-        gw_results, pooled = _run_season_backtest(df, start_gw, end_gw, s)
+        gw_results, pooled = _run_season_backtest(df, start_gw, end_gw, s, progress_callback=progress_callback)
         gameweek_results.extend(gw_results)
         if not pooled.empty:
             all_pooled.append(pooled)
