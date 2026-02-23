@@ -566,8 +566,40 @@ def train_sub_model(
     final = XGBRegressor(**params, **obj_params, random_state=xgb.random_state, verbosity=xgb.verbosity)
     final.fit(X_all, y_all, sample_weight=w_all)
 
+    # Build empirical P(CBIT >= threshold) lookup for defcon sub-models
+    defcon_cdf = None
+    if component == "defcon" and len(X_all) >= 50:
+        from src.config import fpl_scoring as _fpl_scoring
+
+        scoring_pos = _fpl_scoring.scoring.get(position, {})
+        threshold = scoring_pos.get("defcon_threshold", 10)
+
+        preds_all = final.predict(X_all).clip(min=0)
+        actuals_hit = (y_all >= threshold).astype(float)
+
+        # Bin by predicted CBIT value, compute empirical P(hit) per bin
+        _bin_edges = np.percentile(preds_all, np.arange(0, 101, 10))
+        _bin_edges = np.unique(_bin_edges)
+        bins = np.digitize(preds_all, _bin_edges)
+
+        defcon_cdf = {}
+        for b in np.unique(bins):
+            mask = bins == b
+            if mask.sum() >= 5:
+                defcon_cdf[str(int(b))] = {
+                    "p_hit": float(actuals_hit[mask].mean()),
+                    "mean_pred": float(preds_all[mask].mean()),
+                    "n": int(mask.sum()),
+                }
+        defcon_cdf["_bin_edges"] = _bin_edges.tolist()
+        log.info(
+            "    Built empirical DefCon CDF: %d bins, threshold=%d",
+            len(defcon_cdf) - 1, threshold,
+        )
+
     save_sub_model(final, position, component, metadata={
         "features": available_feats,
+        "defcon_cdf": defcon_cdf,
     })
 
     return {

@@ -141,14 +141,27 @@ def predict_decomposed(
     else:
         pos_df["pts_bonus"] = 0.0
 
-    # DefCon: +2 pts if CBIT/CBIRT >= threshold via Poisson CDF
+    # DefCon: +2 pts if CBIT/CBIRT >= threshold
     if "sub_defcon" in pos_df.columns and scoring.get("defcon", 0) > 0:
-        from scipy.stats import poisson
-
         threshold = scoring.get("defcon_threshold", 10)
         expected_cbit = pos_df["sub_defcon"].clip(lower=0.01)
-        # P(CBIT >= threshold) = 1 - CDF(threshold - 1)
-        p_defcon = 1.0 - poisson.cdf(threshold - 1, mu=expected_cbit)
+
+        # Try empirical CDF from training data (handles overdispersion better)
+        defcon_model = sub_models.get("defcon") if sub_models else None
+        defcon_cdf = defcon_model.get("defcon_cdf") if defcon_model else None
+
+        if defcon_cdf is not None and "_bin_edges" in defcon_cdf:
+            bin_edges = np.array(defcon_cdf["_bin_edges"])
+            bins = np.digitize(expected_cbit.values, bin_edges)
+            p_defcon = np.array([
+                defcon_cdf.get(str(int(b)), {}).get("p_hit", 0.0)
+                for b in bins
+            ])
+        else:
+            # Fallback: Poisson CDF
+            from scipy.stats import poisson
+            p_defcon = 1.0 - poisson.cdf(threshold - 1, mu=expected_cbit)
+
         pos_df["pts_defcon"] = pos_df["p_plays"] * p_defcon * scoring["defcon"]
     else:
         pos_df["pts_defcon"] = 0.0

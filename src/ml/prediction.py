@@ -18,6 +18,7 @@ from src.config import (
     POSITION_GROUPS,
     decomposed,
     ensemble,
+    strategy_cfg,
 )
 from src.data.season_detection import detect_current_season
 from src.ml.decomposed import predict_decomposed
@@ -403,6 +404,12 @@ def generate_predictions(
         )
     elif "predicted_next_gw_points" in result.columns:
         result["captain_score"] = result["predicted_next_gw_points"]
+
+    # Differential captain boost in mini-league mode
+    if strategy_cfg.strategy_mode == "mini_league" and "ownership" in result.columns:
+        ownership_pct = result["ownership"].fillna(50).clip(0, 100) / 100.0
+        diff_boost = 1.0 + ensemble.differential_alpha * (1.0 - ownership_pct)
+        result["captain_score"] = result["captain_score"] * diff_boost
 
     # --- Enrich component_details with Q80, captain score, intervals ---
     for _, row in result.iterrows():

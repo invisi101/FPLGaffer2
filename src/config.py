@@ -40,6 +40,7 @@ class EnsembleConfig:
     decomposed_weight: float = 0.15  # 85/15 mean/decomposed blend
     captain_mean_weight: float = 0.4
     captain_q80_weight: float = 0.6
+    differential_alpha: float = 0.3  # Ownership discount in mini_league mode
 
 
 # ---------------------------------------------------------------------------
