@@ -60,8 +60,11 @@ PROJECT_DIR="$PROJECT_DIR"
 cd "\$PROJECT_DIR"
 source .venv/bin/activate
 
-# Kill any existing instance on port 9876
-lsof -ti:9876 | xargs kill -9 2>/dev/null
+# If server is already running, just open the browser and exit
+if curl -s http://127.0.0.1:9876 >/dev/null 2>&1; then
+    open http://127.0.0.1:9876
+    exit 0
+fi
 
 # Start Flask and open browser once ready
 python3 -m src &
