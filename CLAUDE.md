@@ -894,6 +894,23 @@ Additionally:
 2. Add a `strategy_mode` config: "overall_rank" (template-safe) vs "mini_league" (differential).
 3. In mini-league mode, adjust captain score: `captain_score * (1 + alpha * (1 - ownership/100))` where alpha controls differential bias.
 
+#### ~~M9. No Differential Captain Scoring Implementation (~varies, Medium effort)~~ FIXED
+
+**Problem**: The `strategy_mode` config (`"overall_rank"` / `"mini_league"`) existed in `StrategyConfig` but was completely unused. Ownership data was available in predictions but not integrated into captain scoring. In mini-league play, picking a low-ownership captain who hauls gains massive rank.
+
+**Fix**:
+1. Added `differential_alpha: float = 0.3` to `EnsembleConfig` in `config.py`.
+2. In `prediction.py`, after captain_score computation, apply ownership-based boost when `strategy_mode == "mini_league"`: `captain_score *= 1 + 0.3 * (1 - ownership/100)`. A 5% owned player gets ~28.5% boost; a 50% template pick gets ~15%.
+3. No downstream changes needed — captain_planner and MILP solver already consume captain_score.
+
+#### ~~M10. DefCon CBIT Poisson CDF Undervalues DefCon (~3-5 pts/season, Medium effort)~~ FIXED
+
+**Problem**: `decomposed.py` used Poisson CDF for P(CBIT >= threshold). CBIT values range 0-20+ and are overdispersed (variance > mean). Poisson assumes variance == mean, so its CDF underestimates P(CBIT >= threshold) for high-CBIT defenders. Defenders like Saliba, Gabriel, Van Dijk got less DefCon credit than they should.
+
+**Fix**:
+1. In `training.py`, during defcon sub-model training, build empirical P(CBIT >= threshold) lookup from training data. Bin predicted CBIT values into decile bins, compute actual hit rate per bin, save in model metadata as `defcon_cdf`.
+2. In `decomposed.py`, load empirical CDF lookup and use it instead of Poisson CDF. Falls back to Poisson when empirical data is unavailable (e.g. models trained before this change).
+
 ---
 
 ### LOW PRIORITY — Minor Code Concerns
