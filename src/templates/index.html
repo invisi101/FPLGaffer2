@@ -2524,7 +2524,7 @@ function setTaskRunning(running) {
   const dot = document.getElementById('statusDot');
   const container = document.getElementById('progressContainer');
   const log = document.getElementById('progressLog');
-  const btns = [document.getElementById('btnRefresh'), document.getElementById('btnTrain'), document.getElementById('btnBacktest'), document.getElementById('btnRunBacktest')];
+  const btns = [document.getElementById('btnRefresh'), document.getElementById('btnTrain'), document.getElementById('btnRunBacktest')];
 
   if (running) {
     dot.classList.add('running');
