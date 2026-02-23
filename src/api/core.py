@@ -948,15 +948,8 @@ def api_player_explain(player_id):
         features = model_dict["features"]
         importances = model.feature_importances_
 
-        # Get the player's current feature values from predictions CSV
-        feature_values = {}
-        if pred_df is not None:
-            p_row = pred_df[pred_df["player_id"] == player_id]
-            if not p_row.empty:
-                pr = p_row.iloc[0]
-                for f in features:
-                    if f in pr.index and pd.notna(pr[f]):
-                        feature_values[f] = round(float(pr[f]), 4)
+        # Get the player's current feature values from predictions_detail.json
+        feature_values = components.get("feature_values", {})
 
         # Sort by importance and take top 10
         sorted_idx = sorted(range(len(importances)), key=lambda i: importances[i], reverse=True)

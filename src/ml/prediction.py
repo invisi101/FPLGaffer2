@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from src.config import (
+    DEFAULT_FEATURES,
     FEATURE_FILL_DEFAULTS,
     POSITION_GROUPS,
     decomposed,
@@ -354,6 +355,20 @@ def generate_predictions(
             # No decomposed model for this position, just store mean predictions
             for pid, val in mean_by_pid.items():
                 component_details[pid] = {"mean_pred": val, "decomp_pred": 0, "ensemble_pred": val}
+
+    # --- Capture per-player feature values for the explainer ---
+    for pid, detail in component_details.items():
+        player_rows = current[current["player_id"] == pid]
+        if player_rows.empty:
+            continue
+        pr = player_rows.iloc[0]
+        pos = pr.get("position_clean", "MID")
+        features = DEFAULT_FEATURES.get(pos, [])
+        fvals = {}
+        for f in features:
+            if f in pr.index and pd.notna(pr[f]):
+                fvals[f] = round(float(pr[f]), 4)
+        detail["feature_values"] = fvals
 
     # --- Quantile predictions for captain scoring (MID/FWD only) ---
     q80_preds: list[pd.DataFrame] = []
