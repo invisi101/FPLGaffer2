@@ -36,7 +36,7 @@ Never dismiss, reframe, or minimize failing tests. A failing test is a failing t
 - **Python**: Use `.venv/bin/python`, NOT system `python3` (system Python lacks project dependencies)
 - **Run server**: `FLASK_APP=src.api .venv/bin/python -m flask run --port 9876` (serves on `http://127.0.0.1:9876`)
 - **Port 9876**: Often has leftover processes from previous sessions. Kill with `lsof -ti:9876 | xargs kill -9` before starting
-- **Tests**: `.venv/bin/python -m pytest tests/test_integration.py -v` (17 integration tests)
+- **Tests**: `.venv/bin/python -m pytest tests/ -v` (99 tests across 3 files)
 - **No build step**: Frontend is a single file at `src/templates/index.html` (inline CSS + JS). Just edit and refresh.
 - **Flush the cache**: When told to flush/clear the cache, delete ALL of the following for a complete clean slate:
   - `cache/*` — cached FPL API + GitHub CSV data
@@ -148,7 +148,7 @@ src/
 models/     # Saved .joblib model files (gitignored)
 output/     # predictions.csv, season.db (gitignored)
 cache/      # Cached data: 6h GitHub CSVs, 30m FPL API (gitignored)
-tests/      # Integration tests (17 tests)
+tests/      # 99 tests: correctness (53), integration (17), strategy pipeline (29)
 ```
 
 ---
@@ -156,7 +156,7 @@ tests/      # Integration tests (17 tests)
 ## Data Pipeline
 
 ### Sources
-1. **GitHub (FPL-Core-Insights)**: Historical match stats, player stats, player match stats for 2024-2025 and 2025-2026 seasons. Cached 6 hours.
+1. **GitHub (FPL-Core-Insights)**: `https://github.com/FPL-Core-Insights/FPL-Data` — Historical match stats, player stats, player match stats for 2024-2025 and 2025-2026 seasons. CSVs: `match_stats.csv`, `player_stats.csv`, `player_match_stats.csv` per season. Cached 6 hours.
 2. **FPL API** (public, no auth): Current player data (prices, form, injuries, ownership), fixtures, manager picks/history/transfers. Cached 30 minutes.
 
 ### Data Loading (`src/data/loader.py`)
@@ -680,12 +680,31 @@ Key FPL rules that affect codebase logic:
 
 ## Build Pipeline & Releases
 
-GitHub Actions workflow builds Windows and macOS executables via PyInstaller.
+GitHub Actions workflow builds Windows and macOS executables via PyInstaller. Triggers on release creation or manual `workflow_dispatch`.
 
 ### Key files
-- `.github/workflows/build-exe.yml` — Two parallel jobs (windows-latest, macos-latest)
-- `fpl-predictor.spec` / `gaffer-mac.spec` — PyInstaller specs
-- `launcher.py` — Entrypoint for builds (starts Flask + opens browser)
+- **`.github/workflows/build-exe.yml`** — Two parallel jobs (windows-latest, macos-latest). Python 3.12.
+- **`gaffer-windows.spec`** — PyInstaller spec for Windows (`GafferAI.exe`)
+- **`gaffer-mac.spec`** — PyInstaller spec for macOS (`GafferAI.app` bundle)
+- **`launcher.py`** — Entrypoint for PyInstaller builds. Starts Flask server and opens browser. If the server is already running, just opens the browser and exits.
+- **`setup-mac.sh`** — Run once after cloning. Creates venv, installs deps, installs `GafferAI.app` to `/Applications`.
+
+### Creating a release
+```bash
+gh release create v1.1.0 --title "v1.1.0" --notes "Release notes here"
+```
+
+### Rebuilding a release
+`gh release delete` does NOT delete the git tag. You MUST delete both:
+```bash
+gh release delete v1.1.0 --yes
+git push origin --delete v1.1.0
+git tag -d v1.1.0
+gh release create v1.1.0 --title "v1.1.0" --notes "Release notes here"
+```
+
+### macOS launcher behavior
+The launcher script in `GafferAI.app` (and `launcher.py`) detects if the server is already running on port 9876. If yes, it just opens a new browser tab and exits — it does NOT kill and restart the server. This means closing the browser does not stop the server. To stop the server: `lsof -ti:9876 | xargs kill -9`.
 
 ### PyInstaller frozen-mode path detection
 `src/paths.py` handles this globally:
@@ -696,7 +715,11 @@ else:
     BASE_DIR = Path(__file__).resolve().parent.parent
 ```
 
-All path references go through `src.paths` — no module should compute its own paths.
+All path references go through `src.paths` — no module should compute its own paths. If a new file reads/writes to `output/`, `models/`, `cache/`, or `*.db`, it must use `src.paths`.
+
+### Spec file gotchas
+- **xgboost.testing**: `collect_all("xgboost")` imports `xgboost.testing` which calls `pytest.importorskip("hypothesis")`. Fixed with `filter_submodules=lambda name: "testing" not in name`.
+- **Hidden imports**: All 70 `src.*` modules must be listed explicitly in the spec files.
 
 ---
 
