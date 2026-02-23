@@ -2081,7 +2081,7 @@
         <div class="bt-explainer-icon">⚡</div>
         <div>
           <strong>How to Read the Results</strong>
-          <p>The model is tested against <strong>four rivals</strong>: FPL's built-in prediction (ep_next), a player's recent form, their last-3-gameweek average, and the position average. Every GW is a head-to-head matchup. The scoreboard shows the win/loss record.</p>
+          <p>The model is tested against four rivals: FPL's built-in prediction (ep_next), a player's recent form, their last-3-gameweek average, and the position average. Every GW is a head-to-head matchup. The scoreboard shows the win/loss record.</p>
           <p>A good model should: beat FPL's ep_next on MAE most weeks, rank players well (Spearman &gt; 0.6), and capture 85%+ of the theoretical best team's points.</p>
         </div>
       </div>
@@ -6495,6 +6495,7 @@ function renderBTScoreboard(s) {
       </div>
     </div>
     <div class="bt-verdict ${verdictClass}">${verdictText}</div>
+    <div style="text-align:center;font-size:11px;color:var(--text2);margin-top:8px">The p-value comes from a Wilcoxon signed-rank test. The smaller the number, the less likely the result is down to luck.</div>
   `;
 }
 
@@ -6549,7 +6550,7 @@ function renderBTDeepDive(data) {
 
   const cap = (data.diagnostics || {}).captain_analysis || {};
   if (cap.avg_captain_pts != null) {
-    let capHtml = '<h3>Captain Analysis</h3>';
+    let capHtml = '<h3>\u201cJust captain Haaland?\u201d</h3>';
     capHtml += '<p class="bt-section-subtitle">How good is the model at picking the right captain each week?</p>';
     capHtml += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">';
     capHtml += `<div class="bt-stat-card"><div class="bt-stat-val neutral">${cap.avg_captain_pts}</div><div class="bt-stat-label">Avg Captain Pts</div></div>`;
@@ -6576,7 +6577,7 @@ function renderBTDeepDive(data) {
   const over = misses.overpredicted || [];
   const under = misses.underpredicted || [];
   if (over.length > 0 || under.length > 0) {
-    let missHtml = '<h3>Biggest Prediction Misses</h3>';
+    let missHtml = '<h3>Oh the Joys of being an FPL Manager</h3>';
     missHtml += '<p class="bt-section-subtitle">The model\'s worst individual predictions — overpredicted (expected points that didn\'t arrive) and underpredicted (surprise hauls)</p>';
     missHtml += '<div class="bt-miss-grid">';
 
