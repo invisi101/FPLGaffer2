@@ -156,7 +156,7 @@ tests/      # 99 tests: correctness (53), integration (17), strategy pipeline (2
 ## Data Pipeline
 
 ### Sources
-1. **GitHub (FPL-Core-Insights)**: `https://github.com/FPL-Core-Insights/FPL-Data` — Historical match stats, player stats, player match stats for 2024-2025 and 2025-2026 seasons. CSVs: `match_stats.csv`, `player_stats.csv`, `player_match_stats.csv` per season. Cached 6 hours.
+1. **GitHub (olbauday/FPL-Core-Insights)**: `https://github.com/olbauday/FPL-Core-Insights` — Historical match stats, player stats, player match stats for 2024-2025 and 2025-2026 seasons. Raw URL base: `https://raw.githubusercontent.com/olbauday/FPL-Core-Insights/main/data`. CSVs per season: `playerstats.csv`, `player_match_stats.csv`, `match_stats.csv`. Cached 6 hours.
 2. **FPL API** (public, no auth): Current player data (prices, form, injuries, ownership), fixtures, manager picks/history/transfers. Cached 30 minutes.
 
 ### Data Loading (`src/data/loader.py`)
