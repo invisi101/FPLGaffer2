@@ -329,7 +329,7 @@ def generate_predictions(
 
         if not decomp.empty:
             sub_cols = [c for c in decomp.columns if c.startswith("sub_") or c.startswith("pts_")]
-            keep_cols = ["player_id"] + sub_cols + ["p_plays", "p_60plus"]
+            keep_cols = ["player_id", "predicted_next_gw_points"] + sub_cols + ["p_plays", "p_60plus"]
             keep_cols = [c for c in keep_cols if c in decomp.columns]
             for _, row in decomp[keep_cols].iterrows():
                 pid = int(row["player_id"])
