@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.config import strategy_cfg
+from src.config import prediction as pred_cfg, strategy_cfg
 from src.logging_config import get_logger
 from src.solver.squad import solve_milp_team
 
@@ -99,6 +99,10 @@ class ChipEvaluator:
             # Urgency ramps from 1.0 at GW33 to ~1.6 at GW38
             gws_past = current_gw - strategy_cfg.late_season_gw
             urgency = 1.0 + 0.12 * gws_past
+            # M7: Extra urgency in rank-chasing mode (GW36+)
+            if current_gw >= strategy_cfg.rank_chasing_gw:
+                gws_left = max(1, 39 - current_gw)
+                urgency += 0.5 / gws_left
             for chip_name in chip_values:
                 for gw in chip_values[chip_name]:
                     chip_values[chip_name][gw] = round(
@@ -356,21 +360,30 @@ class ChipEvaluator:
 
         for gw in all_gws:
             if gw in future_predictions:
-                # Sum predictions over next 3 GWs from this point
+                # Sum predictions over next 5 GWs from this point
                 look_ahead_gws = [
-                    g for g in pred_gws if gw <= g <= gw + 2
+                    g for g in pred_gws if gw <= g <= gw + 4
                 ]
                 if not look_ahead_gws:
                     values[gw] = 0.0
                     continue
 
-                # Build combined prediction (sum over 3 GWs)
+                # Build combined prediction (sum over look-ahead GWs with decay)
                 combined = None
-                for lag in look_ahead_gws:
+                for i, lag in enumerate(look_ahead_gws):
                     if lag in future_predictions:
                         lag_df = future_predictions[lag][
                             ["player_id", "predicted_points"]
                         ].copy()
+                        # Apply confidence decay for farther GWs
+                        if i > 0:
+                            decay_tuple = pred_cfg.confidence_decay
+                            decay = (
+                                decay_tuple[i - 1]
+                                if i - 1 < len(decay_tuple)
+                                else 0.95 ** i
+                            )
+                            lag_df["predicted_points"] *= decay
                         lag_df = lag_df.rename(
                             columns={"predicted_points": f"pts_{lag}"},
                         )

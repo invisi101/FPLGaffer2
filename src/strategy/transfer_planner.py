@@ -319,6 +319,9 @@ class MultiWeekPlanner:
         late_season = bool(
             plan_gws and plan_gws[0] >= strategy_cfg.late_season_gw
         )
+        rank_chasing = bool(
+            plan_gws and plan_gws[0] >= strategy_cfg.rank_chasing_gw
+        )
 
         for i, gw in enumerate(plan_gws):
             if gw not in filtered_preds:
@@ -392,6 +395,7 @@ class MultiWeekPlanner:
                 step = self._simulate_transfer_gw(
                     gw, gw_chip, gw_df, squad_ids, budget, ft, use_now,
                     solve_transfer_fn, late_season=late_season,
+                    rank_chasing=rank_chasing,
                 )
                 if step is None:
                     return None
@@ -504,11 +508,25 @@ class MultiWeekPlanner:
     def _simulate_transfer_gw(
         self, gw, gw_chip, gw_df, squad_ids, budget, ft, use_now,
         solve_transfer_fn, *, late_season: bool = False,
+        rank_chasing: bool = False,
     ) -> dict | None:
         """Simulate a GW with active transfers."""
         pool = gw_df.dropna(subset=["predicted_points"])
         if "position" not in pool.columns or "cost" not in pool.columns:
-            return None
+            # Fall back to current squad points (same pattern as chip GW)
+            squad_preds = gw_df[gw_df["player_id"].isin(squad_ids)]
+            pts = self._squad_points_with_captain(squad_preds)
+            return {
+                "gw": gw,
+                "transfers_in": [],
+                "transfers_out": [],
+                "ft_used": 0,
+                "ft_available": ft,
+                "predicted_points": round(pts, 2),
+                "base_points": round(pts, 2),
+                "squad_ids": list(squad_ids),
+                "chip": gw_chip,
+            }
 
         cap_col = (
             "captain_score" if "captain_score" in pool.columns else None
@@ -543,10 +561,14 @@ class MultiWeekPlanner:
             # Late-season: reduce effective hit cost (solver applied -4,
             # but in late season we value hits at -3)
             if late_season:
-                hits = max(0, len(transfers_in) - ft)
+                hits = result.get("hits", max(0, len(transfers_in) - ft))
                 if hits > 0:
+                    # M7: Extra discount in rank-chasing mode (GW36+)
+                    effective_cost = strategy_cfg.late_season_hit_cost
+                    if rank_chasing:
+                        effective_cost = max(2.0, effective_cost - 1.0)
                     discount = hits * (
-                        solver_cfg.hit_cost - strategy_cfg.late_season_hit_cost
+                        solver_cfg.hit_cost - effective_cost
                     )
                     pts += discount
 

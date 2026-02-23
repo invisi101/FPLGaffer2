@@ -189,6 +189,8 @@ tests/      # 103 tests: correctness (57), integration (17), strategy pipeline (
 
 All features shifted by 1 GW to prevent leakage. DGW handling: multiple rows per fixture, targets divided by fixture count, predictions summed.
 
+**Non-PL match filtering**: The GitHub CSV source includes ALL competitive matches (Champions League, EFL Cup, FA Cup, etc.). Since FPL points only come from Premier League matches, `build_features()` in `builder.py` filters these out at the start of every feature build. The log messages "Filtering out N non-PL matches" and "Filtering out N non-PL player match stat rows" appear every time because the raw CSVs are loaded from cache (which includes all competitions) and the filtering is applied in-memory. This is correct behavior — the log is informational, not an error.
+
 ---
 
 ## Configuration (`src/config.py`)
@@ -693,6 +695,289 @@ Key FPL rules that affect codebase logic:
 
 ---
 
+## Audit Findings (23 Feb 2026)
+
+Full audit completed: 103 tests passed, 0 failures. 0 bugs found. All 8 previously identified regression patterns confirmed NOT reintroduced. Below are all findings ranked by severity with precise instructions for fixing each one.
+
+### Last Audit Regression Check
+
+| Pattern | Status | Evidence |
+|---------|--------|----------|
+| Availability zeroing before 3-GW merge | PASS | `ml/prediction.py:417-444` (first pass), `:461-466` (second pass) |
+| Budget using now_cost sum | PASS | `season/manager.py:1165` uses `entry_history["value"]` |
+| Single-GW solver as primary path | PASS | `season/manager.py:1233` runs pipeline FIRST |
+| Chip plan not passed to planner | PASS | `season/manager.py:695-712` passes chip_plan |
+| Solver failure kills planning | PASS | `strategy/transfer_planner.py` falls back to current squad pts |
+| Hit cost recomputed from sets | PASS | `solver/validator.py:112-124` trusts solver's hits |
+| Watchlist excluded from prices | PASS | `season/manager.py:519-521` includes watchlist |
+| pandas CoW without .copy() | PASS | `features/playerstats.py:105` has .copy() |
+
+---
+
+### HIGH PRIORITY — Should Fix First
+
+#### ~~H1. Post-Hoc Prediction Calibration (~30-35 pts/season, Low effort)~~ FIXED
+
+**Problem**: 40% overshoot at 5+ predicted points (pred=5.95, actual=4.24). No post-hoc calibration exists. The soft caps in `decomposed.py:184-195` only affect 15% of the ensemble (decomposed weight), so they barely move the final number. This cascades to captain picks, transfer recs, and chip timing — all are based on inflated predictions at the top end.
+
+**Root causes**: (a) XGBoost Huber loss suppresses tail learning, (b) soft caps only on decomposed model, (c) no calibration correction on 1-GW predictions.
+
+**Fix**: Add isotonic regression calibration using existing walk-forward residuals.
+
+1. In `ml/training.py` after line 243: `all_pred_resid` is a list of `(predicted, residual)` tuples collected during walk-forward CV (lines 208-209). Convert to `(predicted, actual)` pairs and fit a calibrator:
+```python
+from sklearn.isotonic import IsotonicRegression
+pr = np.array(all_pred_resid)
+pred_vals, resid_vals = pr[:, 0], pr[:, 1]
+actual_vals = pred_vals + resid_vals  # residual = actual - predicted
+calibrator = IsotonicRegression(out_of_bounds="clip")
+calibrator.fit(pred_vals, actual_vals)
+```
+Save `calibrator` in the model metadata dict (alongside `residual_bins`, `bin_edges`).
+
+2. In `ml/model_store.py`: The calibrator is already a picklable sklearn object — it will serialize naturally with joblib alongside the XGBoost model. Just include it in the metadata dict: `"calibrator": calibrator`.
+
+3. In `ml/prediction.py` at line 122: After `model.predict(X).clip(min=0)`, apply calibration:
+```python
+pos_df[pred_col] = model.predict(X).clip(min=0)
+if calibrator is not None:
+    pos_df[pred_col] = calibrator.predict(pos_df[pred_col].values).clip(min=0)
+```
+Load calibrator from metadata when loading each position model.
+
+4. ~30 lines of code across 3 files. Monotonic — preserves player rankings, only corrects magnitude. Guard with `if len(all_pred_resid) >= 50` to prevent degenerate fits.
+
+**Verify with**: Run benchmarks. `model_avg_mae` should decrease. Check that predictions at 5+ pts are no longer systematically inflated.
+
+#### ~~H2. Quantile Model (Q80) Lacks Early Stopping (~15-20 pts/season, Low effort)~~ FIXED
+
+**Problem**: The mean model uses `early_stopping_rounds=20` with a validation split (`training.py:202-203`), but the Q80 quantile model trains all 150 trees with no early stopping (`training.py:392-400`). Q80 directly drives captain selection via `captain_score = 0.4*mean + 0.6*Q80`. An overfitted Q80 produces unreliable captain scores — it may flag "explosive" weeks that are actually noise.
+
+**Fix**: Copy the validation-split + early-stopping pattern from `train_model` (lines 274-286) into `train_quantile_model` (lines 388-400).
+
+Current code at line 393-400 (NO early stopping):
+```python
+final_model = XGBRegressor(
+    objective="reg:quantileerror", quantile_alpha=alpha,
+    n_estimators=xgb.n_estimators, max_depth=xgb.max_depth, ...
+)
+final_model.fit(X_all, y_all, sample_weight=w_all)
+```
+
+Should become (matching mean model pattern at lines 274-286):
+```python
+val_size_final = max(1, int(len(X_all) * 0.15))
+final_model = XGBRegressor(
+    objective="reg:quantileerror", quantile_alpha=alpha,
+    n_estimators=xgb.n_estimators, max_depth=xgb.max_depth, ...,
+    early_stopping_rounds=xgb.early_stopping_rounds,
+)
+final_model.fit(
+    X_all[:-val_size_final], y_all[:-val_size_final],
+    sample_weight=w_all[:-val_size_final],
+    eval_set=[(X_all[-val_size_final:], y_all[-val_size_final:])],
+    verbose=False,
+)
+```
+
+**Verify with**: Run benchmarks. `captain_hit_rate` should improve or stay same. Check that Q80 predictions are not inflated vs actuals.
+
+#### ~~H3. Backtest Uses Different Objective Than Production (~0 pts but breaks benchmarking)~~ FIXED
+
+**Problem**: Backtest trains with `reg:squarederror` but production uses `reg:pseudohubererror` (`ml/backtest.py`). Additionally, backtest ensemble uses inner merge (not outer like production at `prediction.py`). This means backtest results don't perfectly reflect production model behavior — benchmarking protocol comparisons are slightly misleading.
+
+**Fix**:
+1. In `ml/backtest.py` line 117: Change `objective="reg:squarederror"` to `objective="reg:pseudohubererror"`.
+2. In `ml/backtest.py` line 870: Change `how="inner"` to `how="outer"` (matching production `prediction.py`).
+3. Small change, 2 lines.
+
+**Verify with**: Run backtest before and after. Results will shift slightly (this is expected — the new results are more representative of production).
+
+---
+
+### MEDIUM PRIORITY — Should Investigate
+
+#### ~~M1. Add Missing Interaction Features (~15-20 pts/season, Low effort)~~ FIXED
+
+**Problem**: `features/interactions.py:26-27` has `xg_x_opp_goals_conceded` but no equivalent for assists. Missing interactions identified by audit:
+- `xa_x_opp_goals_conceded = player_xa_last3 * opp_goals_conceded_last3` — assisters benefit from leaky defences
+- `xg_overperformance = player_goals_last3 - player_xg_last3` — identifies clinical finishers (Son, Salah) who consistently beat their xG
+- `form_x_fixture = player_form * (4.0 - fdr)` — form weighted by fixture ease
+
+**Fix**:
+1. In `features/interactions.py`, add after the `cs_opportunity` block (line 39):
+```python
+# Assist opportunity: player xA * opponent leakiness
+if "player_xa_last3" in df.columns and "opp_goals_conceded_last3" in df.columns:
+    df["xa_x_opp_goals_conceded"] = df["player_xa_last3"] * df["opp_goals_conceded_last3"]
+
+# Clinical finishing: goals above expected (identifies players who beat their xG)
+if "player_goals_last3" in df.columns and "player_xg_last3" in df.columns:
+    df["xg_overperformance"] = df["player_goals_last3"] - df["player_xg_last3"]
+
+# Form x fixture ease: form weighted by fixture difficulty
+if "form" in df.columns and "fdr" in df.columns:
+    df["form_x_fixture"] = df["form"] * (4.0 - df["fdr"])
+```
+2. In `config.py` `DEFAULT_FEATURES`: Add `"xa_x_opp_goals_conceded"` to DEF, MID, FWD lists. Add `"xg_overperformance"` to MID, FWD lists. Add `"form_x_fixture"` to all 4 position lists.
+3. In `config.py` `SUB_MODEL_FEATURES`: Add `"xa_x_opp_goals_conceded"` to the assists sub-model feature lists.
+
+**Verify with**: Run benchmarks. `model_avg_mae` should decrease or stay same. Check feature importance — new features should appear in top 20.
+
+#### ~~M2. Wildcard Evaluated Over 3 GWs, Not Full Planning Horizon (~10-15 pts/season, Medium effort)~~ FIXED
+
+**Problem**: `chip_evaluator.py:361` limits WC look-ahead to `gw <= g <= gw + 2` (3 GWs). A WC permanently restructures the squad — its value accrues over every remaining GW. This systematically undervalues WCs, leading to late/never usage and missed WC->BB synergies. A top manager plans WC to optimize for 5-8 GWs of fixture runs.
+
+**Fix**: In `chip_evaluator.py`, modify `_evaluate_wildcard`:
+
+Current code at line 360-361:
+```python
+look_ahead_gws = [g for g in pred_gws if gw <= g <= gw + 2]
+```
+
+Change to use full planning horizon (5 GWs):
+```python
+look_ahead_gws = [g for g in pred_gws if gw <= g <= gw + 4]
+```
+
+Additionally:
+1. Apply confidence decay to the per-GW predictions before summing (import `pred_cfg` from config, use `pred_cfg.confidence_decay` to discount farther GWs).
+2. The combined prediction loop at lines 368-391 must apply the same decay to BOTH the new WC squad and the current squad evaluation — keep the comparison consistent.
+3. The MILP solve at line 451 uses `"total_pts"` column which is the sum — this naturally works with a longer window.
+4. Cap at 5 GWs max (`min(gw + 4, max(pred_gws))`) to match the planning horizon.
+
+**Verify with**: Check that WC values in the chip heatmap are higher and that WC is recommended earlier in fixture swing periods. Run benchmarks.
+
+#### ~~M3. Transfer Planner Aborts Path on Missing Position/Cost Data (Medium effort)~~ FIXED
+
+**Problem**: `transfer_planner.py:510-511` — if any predictions lack position/cost columns, `_simulate_transfer_gw` returns `None`, which causes `_simulate_path` to abort the entire 5-GW planning path. Should fall back gracefully like `_simulate_chip_gw` does.
+
+**Fix**: Replace the `return None` at line 510-511 with a fallback that returns a step dict using the current squad's predicted points (same pattern as `_simulate_chip_gw` lines 452-464).
+
+#### ~~M4. Late-Season Hit Discount Uses len(transfers_in) Not Solver's Hits (Low effort)~~ FIXED
+
+**Problem**: `transfer_planner.py:545-551` recomputes hits as `max(0, len(transfers_in) - ft)` from the raw set difference, which includes forced replacements of unavailable players. Should use `result.get("hits", 0)` from the solver output instead. Only affects the late-season hit discount calculation.
+
+**Fix**: Replace `len(transfers_in)` with `result.get("hits", 0)` at line 546-547.
+
+#### ~~M5. Bank Analysis Uses Same Predictions for Both Weeks (Low effort)~~ FIXED
+
+**Problem**: `season/manager.py:914-1029` — the "save FT" vs "use FT" comparison uses identical predictions for both week 1 and week 2. Doesn't account for fixture changes between GWs. Acceptable as a rough heuristic but could be improved.
+
+**Fix**: If multi-GW predictions are available, use GW+2 predictions for the week 2 comparison. This is a nice-to-have, not urgent.
+
+#### ~~M6. Bench Order Not Optimized for Auto-Sub Probability (~7-8 pts/season, Medium effort)~~ FIXED
+
+**Problem**: `solver/squad.py:176-193` orders bench by predicted points, not `P(auto_sub_needed) * predicted_points`. Auto-subs trigger ~15 of 38 GWs. A bench midfielder with 60% higher chance of being needed could be a better first sub than a higher-predicted bench defender.
+
+**Fix**:
+1. Compute per-player auto-sub probability from `availability_rate_last5` and position rotation patterns.
+2. Modify bench sort in `squad.py` to use `expected_sub_value = P(needed) * predicted_points`.
+3. Consider making bench weight player-specific in the MILP objective (more complex).
+
+#### ~~M7. No End-of-Season Behavioral Change (GW35-38) (~5-10 pts/season, Medium effort)~~ FIXED
+
+**Problem**: No differential captaincy, chip dumping urgency, or aggressive transfer strategy for final GWs when chasing rank. Late-season chip urgency exists (`chip_evaluator.py:96-106`) but no rank-chasing mode.
+
+**Fix**: Add a `rank_chasing` flag to `StrategyConfig`. When active (and late season):
+- Increase willingness to take hits (reduce hit cost further)
+- Bias captain picks toward lower-ownership players (differential upside)
+- Force-use remaining chips (don't hoard past GW36)
+- Could be toggled from the UI Strategy tab
+
+#### ~~M8. No Differential/Ownership-Aware Mode (~varies, Medium effort)~~ FIXED
+
+**Problem**: No toggle for mini-league (differential) vs overall rank (template) strategy. Ownership data exists but isn't used in transfer/captain decisions. Ownership is a feature for GKP/DEF but notably NOT for MID/FWD — which is backwards since ownership matters most for captain picks.
+
+**Fix**:
+1. Add `ownership` to MID and FWD feature lists in `config.py` (currently only in GKP/DEF).
+2. Add a `strategy_mode` config: "overall_rank" (template-safe) vs "mini_league" (differential).
+3. In mini-league mode, adjust captain score: `captain_score * (1 + alpha * (1 - ownership/100))` where alpha controls differential bias.
+
+---
+
+### LOW PRIORITY — Minor Code Concerns
+
+#### L1. Feature Fill Defaults Missing for days_rest, fixture_congestion, chance_of_playing
+
+**Problem**: `builder.py:336-337` fills `days_rest` with 7.0 and `fixture_congestion` with 1/7. `playerstats.py:76` fills `chance_of_playing` with 100. These are NOT in `FEATURE_FILL_DEFAULTS` in `config.py`. If any NaN survives to the ML layer, it would fill as 0 (wrong for days_rest and chance_of_playing).
+
+**Fix**: Add to `FEATURE_FILL_DEFAULTS` in `config.py`: `"days_rest": 7.0`, `"fixture_congestion": 0.143`, `"chance_of_playing": 100.0`.
+
+#### L2. Redundant fdr fillna
+
+**Problem**: `builder.py:356` fills `fdr` with 3.0, but `FEATURE_FILL_DEFAULTS` also has `fdr: 3.0`. Double fill is harmless but redundant.
+
+**Fix**: Remove the builder-level fill at line 356, let `FEATURE_FILL_DEFAULTS` handle it.
+
+#### L3. Dead Code in _simulate_chip_gw
+
+**Problem**: `transfer_planner.py:370-371` checks `if step is None: return None` but `_simulate_chip_gw` can never return None (it always returns a fallback dict).
+
+**Fix**: Remove the dead check or add a comment explaining it's defensive.
+
+#### L4. Own-Team Rolling Windows Hardcoded
+
+**Problem**: `team_stats.py:130` uses `for window in [3, 5]` instead of importing from config. Works correctly but isn't configurable.
+
+**Fix**: Import `OPPONENT_ROLLING_WINDOWS` (or add `TEAM_ROLLING_WINDOWS`) from config and use that.
+
+#### L5. EWM Feature Naming Misnomer
+
+**Problem**: `player_rolling.py:91` names EWM features with `_last3` suffix but EWM uses `span=5`. Misleading but no functional impact.
+
+**Fix**: Rename to `_ewm5` or `_ewm` suffix. Note: this would require retraining models and updating all feature list references in `config.py`.
+
+#### L6. DefCon CBIT Poisson CDF May Undervalue DefCon
+
+**Problem**: `decomposed.py:148-152` uses Poisson CDF for P(CBIT >= threshold). CBIT range (0-20+) may be overdispersed — Poisson underestimates tail probability. High-CBIT defenders get less DefCon credit than they should.
+
+**Fix**: Investigate Negative Binomial CDF instead. Requires: (a) estimating a dispersion parameter from training data, (b) replacing `poisson.cdf` with `nbinom.cdf` in `decomposed.py`. Medium effort, uncertain payoff.
+
+#### L7. Bonus Sub-Model Uses Poisson for Bounded 0-3 Data
+
+**Problem**: Bonus points are bounded at 0-3 but modeled with Poisson (unbounded). Distribution mismatch is mild since E[bonus] stays in valid range. Ordinal regression or Binomial(n=3) would be more principled.
+
+**Fix**: Low priority. Could experiment with `reg:squarederror` for the bonus sub-model objective in `config.py` and compare via backtest.
+
+#### L8. GKP Feature-to-Sample Ratio (~1:43)
+
+**Problem**: GKP has ~35 features but only ~1,500 training rows (~1:43 ratio). Potential overfitting risk, though XGBoost regularization and walk-forward CV mitigate this.
+
+**Fix**: Consider pruning low-importance features for GKP. Run feature importance analysis and drop features with <1% importance. Could reduce to ~20 features.
+
+#### L9. 85/15 Ensemble Blend Not Empirically Optimized
+
+**Problem**: `config.py:40` sets `decomposed_weight=0.15` by judgement, not grid search. May not be optimal. Per-position weights could help (GKP benefits more from decomposed model).
+
+**Fix**: After implementing H1 (calibration), run a grid search over decomposed_weight in [0.05, 0.10, 0.15, 0.20, 0.25] using backtest MAE. Also try per-position weights.
+
+#### L10. Rotation Risk Modeled Only by availability_rate_last5
+
+**Problem**: No manager-specific rotation model. Guardiola vs Arteta have very different patterns. 5-GW availability window may miss systematic patterns. No cup rotation awareness.
+
+**Fix**: Future improvement. Could add features: `manager_rotation_rate` (team-level rotation frequency), `cup_midweek` (boolean for midweek European/cup game), `days_since_last_start` (per player).
+
+#### L11. Transfer Timing Doesn't Integrate Price Predictions
+
+**Problem**: Price predictions exist in `strategy/price_tracker.py` but aren't fed into transfer timing decisions. The price bonus mechanism in `transfer_planner.py:178-202` is basic. No sell-before-drop logic.
+
+**Fix**: Integrate price predictions into transfer planner's scoring. Add negative price bonus for players predicted to drop. Prioritize early buys for players about to rise.
+
+#### L12. CLAUDE.md Documentation Inconsistency
+
+**Problem**: The Phase 3 audit checklist (Agent 5, item 7) says "Bench weight (0.1)" but the actual value in code is `bench_weight=0.25` (`config.py:50`). The config table earlier in this file correctly states 0.25.
+
+**Fix**: Update the audit checklist text from "(0.1)" to "(0.25)" in the Phase 3 Agent 5 section.
+
+---
+
+### Top 5 Improvements by Expected Impact
+
+All top 5 improvements have been implemented (H1, M1, H2, M2, M6). Run benchmarks to verify impact.
+
+---
+
 ## Build Pipeline & Releases
 
 GitHub Actions workflow builds Windows and macOS executables via PyInstaller. Triggers on release creation or manual `workflow_dispatch`.
@@ -873,7 +1158,7 @@ These agents evaluate whether the mathematical and statistical choices are SOUND
 4. **Captain formula** (0.4 * mean + 0.6 * Q80): Is 60% Q80 weight the right balance for identifying explosive captaincy upside? Only MID/FWD have Q80 models — should GKP/DEF have captaincy scoring? (Probably not, but justify.)
 5. **XGBoost hyperparameters** (n_estimators=150, max_depth=5, learning_rate=0.1, subsample=0.8): Overfitting or underfitting? With walk-forward using 20 splits, is there enough data per fold? Would early stopping improve robustness?
 6. **Sample weighting** (current_season=1.0, previous=0.5): Does this help or hurt? Would 0.7/0.3 or 0.8/0.2 be better? Does the game change enough season-to-season to justify heavy discounting?
-7. **Bench weight** (0.1): What does this produce in practice? Is 0.1 too low (terrible bench = bad auto-subs) or too high (weakens starters)? What's the expected auto-sub frequency in FPL?
+7. **Bench weight** (0.25): What does this produce in practice? Is 0.25 too low (terrible bench = bad auto-subs) or too high (weakens starters)? What's the expected auto-sub frequency in FPL?
 8. **Hit cost** (-4 points): Is this always the correct penalty? A hit to bring in a player for 5 good fixtures is different from one that helps for 1 GW. Does the planner account for amortized hit value?
 
 ---

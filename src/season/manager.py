@@ -773,6 +773,9 @@ class SeasonManager:
         n_chips = len(chip_schedule)
         log(f"Strategy pipeline complete: {n_timeline} GW timeline, {n_chips} chips scheduled.")
 
+        # Stash future predictions for bank analysis (M5)
+        self._last_future_predictions = future_predictions
+
         return strategic_plan
 
     def _log_plan_changes(
@@ -918,6 +921,7 @@ class SeasonManager:
         total_budget: float,
         free_transfers: int,
         code_to_short: dict,
+        gw2_pool: pd.DataFrame | None = None,
     ) -> dict:
         """Multi-week lookahead: compare FT allocation strategies over 2 weeks.
 
@@ -983,10 +987,24 @@ class SeasonManager:
             next_week_fts = min(remaining + 1, 5)
 
             # Week 2: solve from week 1's squad with next_week_fts transfers
+            # M5: Use GW+2 predictions when available for more accurate week 2
+            w2_pool = pool
+            w2_col = gw_col
+            w2_cap_col = cap_col
+            if gw2_pool is not None and "predicted_points" in gw2_pool.columns:
+                w2_df = gw2_pool.copy()
+                if "position" in w2_df.columns and "cost" in w2_df.columns:
+                    w2_col = "predicted_points"
+                    w2_cap_col = (
+                        "captain_score"
+                        if "captain_score" in w2_df.columns
+                        else None
+                    )
+                    w2_pool = w2_df.dropna(subset=["position", "cost", w2_col])
             result_w2 = solve_transfer_milp(
-                pool, week1_squad_ids, gw_col,
+                w2_pool, week1_squad_ids, w2_col,
                 budget=week1_budget, max_transfers=next_week_fts,
-                captain_col=cap_col,
+                captain_col=w2_cap_col,
             )
             week2_pts = result_w2["starting_points"] if result_w2 else 0
 
@@ -1435,9 +1453,14 @@ class SeasonManager:
         # H3 fix: Run bank vs use analysis
         log("Running bank vs use analysis...")
         try:
+            # M5: Use GW+2 predictions for week 2 comparison when available
+            gw2_pool = None
+            fp = getattr(self, "_last_future_predictions", None)
+            if fp and next_gw and (next_gw + 1) in fp:
+                gw2_pool = fp[next_gw + 1]
             bank_analysis = self._analyze_bank_vs_use(
                 players_df, current_squad_ids, total_budget, free_transfers,
-                code_to_short,
+                code_to_short, gw2_pool=gw2_pool,
             )
             bank_analysis_json = json.dumps(bank_analysis)
         except Exception as exc:

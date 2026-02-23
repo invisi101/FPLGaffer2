@@ -121,6 +121,11 @@ def predict_for_position(
     pred_col = f"predicted_{target}{suffix}"
     pos_df[pred_col] = model.predict(X).clip(min=0)
 
+    # Post-hoc isotonic calibration (corrects top-end overshoot)
+    calibrator = model_dict.get("calibrator")
+    if calibrator is not None:
+        pos_df[pred_col] = calibrator.predict(pos_df[pred_col].values).clip(min=0)
+
     # DGW: sum per-fixture predictions
     if pos_df.duplicated(subset=["player_id"], keep=False).any():
         agg_pred = pos_df.groupby("player_id")[pred_col].sum()

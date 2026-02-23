@@ -176,6 +176,7 @@ SUB_MODEL_FEATURES: dict[str, list[str]] = {
         "is_home", "fdr", "opponent_elo", "gw_creativity",
         "player_form", "next_gw_fixture_count",
         "player_minutes_played_last3", "starts_per_90",
+        "xa_x_opp_goals_conceded",
     ],
     "cs": [
         "opp_opponent_xg_last3", "opp_opponent_shots_on_target_last3",
@@ -249,6 +250,7 @@ DEFAULT_FEATURES: dict[str, list[str]] = {
         "transfers_in_event", "net_transfers",
         "opp_big_chances_allowed_last3",
         "opp_goals_scored_last3", "opp_xg_last3",
+        "form_x_fixture",
     ],
     "DEF": [
         "player_form", "cost", "gw_player_bps", "is_home", "fdr",
@@ -273,6 +275,7 @@ DEFAULT_FEATURES: dict[str, list[str]] = {
         "opp_big_chances_allowed_last3",
         "opp_goals_scored_last3", "opp_xg_last3",
         "availability_rate_last5",
+        "xa_x_opp_goals_conceded", "form_x_fixture",
     ],
     "MID": [
         "player_form", "cost", "gw_player_bps", "is_home", "fdr",
@@ -302,6 +305,7 @@ DEFAULT_FEATURES: dict[str, list[str]] = {
         "xg_volatility_last5", "form_acceleration", "big_chance_frequency_last5",
         "availability_rate_last5",
         "player_cbit_last3", "player_tackles_won_last3", "player_interceptions_last3",
+        "xa_x_opp_goals_conceded", "xg_overperformance", "form_x_fixture", "ownership",
     ],
     "FWD": [
         "player_form", "cost", "gw_player_bps", "is_home", "fdr",
@@ -329,6 +333,7 @@ DEFAULT_FEATURES: dict[str, list[str]] = {
         "vs_opponent_xg_avg", "vs_opponent_goals_avg", "vs_opponent_matches",
         "xg_volatility_last5", "form_acceleration", "big_chance_frequency_last5",
         "availability_rate_last5",
+        "xa_x_opp_goals_conceded", "xg_overperformance", "form_x_fixture", "ownership",
     ],
 }
 
@@ -355,6 +360,8 @@ class StrategyConfig:
     ft_max_bank: int = 5             # Max banked free transfers
     late_season_gw: int = 33         # GW from which late-season mode activates
     late_season_hit_cost: float = 3.0  # Reduced hit cost in late season
+    rank_chasing_gw: int = 36           # GW from which rank-chasing mode activates
+    strategy_mode: str = "overall_rank"  # "overall_rank" or "mini_league"
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +464,9 @@ FEATURE_LABELS: dict[str, str] = {
     "xg_x_opp_goals_conceded": "xG vs Opp Defensive Weakness",
     "chances_x_opp_big_chances": "Chances vs Opp Defensive Gaps",
     "cs_opportunity": "Clean Sheet Opportunity",
+    "xa_x_opp_goals_conceded": "xA vs Opp Defensive Weakness",
+    "xg_overperformance": "Goals Above Expected (Clinical)",
+    "form_x_fixture": "Form x Fixture Ease",
     "venue_matched_form": "Venue-Matched Form",
     # Team stats
     "team_clean_sheet_last3": "Team Clean Sheets (3-GW)",

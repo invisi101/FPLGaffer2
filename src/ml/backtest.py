@@ -114,7 +114,7 @@ def _train_backtest_model(
         )
     else:
         model = XGBRegressor(
-            objective="reg:squarederror",
+            objective="reg:pseudohubererror",
             n_estimators=xgb.n_estimators, max_depth=xgb.max_depth,
             learning_rate=xgb.learning_rate, subsample=xgb.subsample,
             colsample_bytree=xgb.colsample_bytree,
@@ -867,7 +867,7 @@ def _compute_3gw_backtest(pooled: pd.DataFrame) -> dict:
 
         merged = gw_dfs[0]
         for extra in gw_dfs[1:]:
-            merged = merged.merge(extra, on="player_id", how="inner")
+            merged = merged.merge(extra, on="player_id", how="outer")
 
         if len(merged) < 20:
             continue

@@ -13,6 +13,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
+from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 
@@ -242,6 +243,16 @@ def train_model(
                     "q90": float(np.percentile(resid_vals[mask], 90)),
                 }
 
+    # Isotonic calibration from walk-forward residuals
+    calibrator = None
+    if len(all_pred_resid) >= 50:
+        pr_cal = np.array(all_pred_resid)
+        pred_vals_cal = pr_cal[:, 0]
+        actual_vals_cal = pred_vals_cal + pr_cal[:, 1]  # residual = actual - pred
+        calibrator = IsotonicRegression(out_of_bounds="clip")
+        calibrator.fit(pred_vals_cal, actual_vals_cal)
+        log.info("    Fitted isotonic calibrator from %d walk-forward predictions", len(all_pred_resid))
+
     # Holdout: last 3 sequential GWs
     seq_gws = sorted(pos_df["_seq_gw"].unique())
     holdout_gws = set(seq_gws[-3:])
@@ -292,6 +303,7 @@ def train_model(
         "residual_q90": residual_q90,
         "residual_bins": residual_bins,
         "bin_edges": bin_edges,
+        "calibrator": calibrator,
     })
 
     return {
@@ -385,19 +397,26 @@ def train_quantile_model(
         avg_calibration * 100, int(alpha * 100), alpha * 100,
     )
 
-    # Train final model on all data
+    # Train final model on all data (last 15% as early-stopping validation)
     X_all = pos_df[available_feats].values
     y_all = pos_df[target].values
     w_all = pos_df["_sample_weight"].values
 
+    val_size_final = max(1, int(len(X_all) * 0.15))
     final_model = XGBRegressor(
         objective="reg:quantileerror", quantile_alpha=alpha,
         n_estimators=xgb.n_estimators, max_depth=xgb.max_depth,
         learning_rate=xgb.learning_rate, subsample=xgb.subsample,
         colsample_bytree=xgb.colsample_bytree,
         random_state=xgb.random_state, verbosity=xgb.verbosity,
+        early_stopping_rounds=xgb.early_stopping_rounds,
     )
-    final_model.fit(X_all, y_all, sample_weight=w_all)
+    final_model.fit(
+        X_all[:-val_size_final], y_all[:-val_size_final],
+        sample_weight=w_all[:-val_size_final],
+        eval_set=[(X_all[-val_size_final:], y_all[-val_size_final:])],
+        verbose=False,
+    )
 
     save_model(final_model, position, target, metadata={
         "features": available_feats,

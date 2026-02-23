@@ -38,4 +38,18 @@ def build_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
     elif "opp_opponent_xg_last3" in df.columns:
         df["cs_opportunity"] = 1.0 / (df["opp_opponent_xg_last3"] + 0.1)
 
+    # Assist opportunity: player xA * opponent leakiness
+    if "player_xa_last3" in df.columns and "opp_goals_conceded_last3" in df.columns:
+        df["xa_x_opp_goals_conceded"] = df["player_xa_last3"] * df["opp_goals_conceded_last3"]
+
+    # Clinical finishing: goals above expected (identifies players who beat their xG)
+    if "player_goals_last3" in df.columns and "player_xg_last3" in df.columns:
+        df["xg_overperformance"] = df["player_goals_last3"] - df["player_xg_last3"]
+
+    # Form x fixture ease: form weighted by fixture difficulty
+    if "form" in df.columns and "fdr" in df.columns:
+        df["form_x_fixture"] = df["form"] * (4.0 - df["fdr"])
+    elif "player_form" in df.columns and "fdr" in df.columns:
+        df["form_x_fixture"] = df["player_form"] * (4.0 - df["fdr"])
+
     return df

@@ -187,9 +187,19 @@ def solve_milp_team(
         bench_outfield["_priority"] = bench_outfield["position"].apply(
             lambda p: 1 if p in constrained else 0
         )
+        # M6: Weight bench order by expected auto-sub value
+        # P(needed) approximated from availability_rate_last5 of starters
+        # (lower starter availability = higher bench need)
+        if "availability_rate_last5" in bench_outfield.columns:
+            bench_outfield["_sub_value"] = (
+                bench_outfield[target_col]
+                * (1.0 + (100.0 - bench_outfield["availability_rate_last5"].fillna(90)) / 100.0)
+            )
+        else:
+            bench_outfield["_sub_value"] = bench_outfield[target_col]
         bench_outfield = bench_outfield.sort_values(
-            ["_priority", target_col], ascending=[False, False],
-        ).drop(columns=["_priority"])
+            ["_priority", "_sub_value"], ascending=[False, False],
+        ).drop(columns=["_priority", "_sub_value"])
     bench = pd.concat([bench_gk, bench_outfield])
 
     pos_order = {"GKP": 0, "DEF": 1, "MID": 2, "FWD": 3}
