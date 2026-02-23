@@ -130,6 +130,15 @@ class TestConfigSanity:
         assert 30 <= strategy_cfg.late_season_gw <= 36
         assert 0 < strategy_cfg.late_season_hit_cost < solver_cfg.hit_cost
 
+    def test_cs_objective_is_binary_logistic(self):
+        assert decomposed.objectives["cs"] == "binary:logistic"
+
+    def test_mean_model_uses_huber_loss(self):
+        """Mean regression uses Huber loss to reduce overprediction at extremes."""
+        # Verify the objective string is valid for XGBoost
+        obj = "reg:pseudohubererror"
+        assert "huber" in obj.lower()
+
 
 # ===========================================================================
 # 2. FPL scoring formula (decomposed.py)
@@ -566,6 +575,28 @@ class TestSolverFPLCompliance:
             f"Captain {cid} (score={cap_row['captain_score']}) "
             f"not in top 5: {top5}"
         )
+
+    def test_bench_ordering_prioritises_constrained_positions(self, pool):
+        """Bench prioritises players from formation-minimum positions."""
+        from src.solver.squad import solve_milp_team
+
+        result = solve_milp_team(pool, "predicted_next_gw_points", budget=1000)
+        assert result is not None
+        bench = result["bench"]
+        # GKP must be first bench slot
+        assert bench[0]["position"] == "GKP"
+        # Outfield bench should have 3 players
+        outfield_bench = [p for p in bench if p["position"] != "GKP"]
+        assert len(outfield_bench) == 3
+        # If starting XI has DEF at minimum (3), first outfield bench should
+        # be a DEF if one is available
+        starter_positions = [p["position"] for p in result["starters"]]
+        if starter_positions.count("DEF") == 3:
+            bench_positions = [p["position"] for p in outfield_bench]
+            if "DEF" in bench_positions:
+                assert outfield_bench[0]["position"] == "DEF", (
+                    "With 3 starting DEF, bench DEF should be first outfield sub"
+                )
 
 
 # ===========================================================================

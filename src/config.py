@@ -128,7 +128,7 @@ class DecomposedConfig:
     objectives: dict[str, str] = field(default_factory=lambda: {
         "goals": "count:poisson",
         "assists": "count:poisson",
-        "cs": "reg:squarederror",
+        "cs": "binary:logistic",
         "bonus": "count:poisson",
         "goals_conceded": "count:poisson",
         "saves": "count:poisson",

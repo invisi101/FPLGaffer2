@@ -165,12 +165,7 @@ def predict_decomposed(
         + pos_df["pts_defcon"]
     ).clip(lower=0)
 
-    # Soft calibration cap
-    cap = decomposed.soft_caps.get(position, 10.0)
     pred_col = "predicted_next_gw_points"
-    over = pos_df[pred_col] > cap
-    if over.any():
-        pos_df.loc[over, pred_col] = cap + (pos_df.loc[over, pred_col] - cap) * 0.5
 
     # DGW: sum per-fixture predictions
     if pos_df.duplicated(subset=["player_id"], keep=False).any():
@@ -183,5 +178,20 @@ def predict_decomposed(
         for c in sum_cols:
             deduped[c] = agg[c]
         pos_df = deduped.reset_index()
+
+    # DGW-aware soft calibration cap (applied after DGW summation so DGW
+    # predictions aren't suppressed by a cap designed for single fixtures)
+    cap = decomposed.soft_caps.get(position, 10.0)
+    if "next_gw_fixture_count" in pos_df.columns:
+        eff_cap = cap * pos_df["next_gw_fixture_count"].clip(lower=1)
+        over = pos_df[pred_col] > eff_cap
+        if over.any():
+            pos_df.loc[over, pred_col] = (
+                eff_cap[over] + (pos_df.loc[over, pred_col] - eff_cap[over]) * 0.5
+            )
+    else:
+        over = pos_df[pred_col] > cap
+        if over.any():
+            pos_df.loc[over, pred_col] = cap + (pos_df.loc[over, pred_col] - cap) * 0.5
 
     return pos_df

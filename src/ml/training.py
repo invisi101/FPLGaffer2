@@ -158,7 +158,7 @@ def train_model(
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             base_model = XGBRegressor(
-                objective="reg:squarederror",
+                objective="reg:pseudohubererror",
                 random_state=xgb.random_state, verbosity=xgb.verbosity,
             )
             tscv = TimeSeriesSplit(n_splits=3)
@@ -197,7 +197,7 @@ def train_model(
         w_tr = w_train[:-val_size]
 
         model = XGBRegressor(
-            **best_params, objective="reg:squarederror",
+            **best_params, objective="reg:pseudohubererror",
             random_state=xgb.random_state, verbosity=xgb.verbosity,
             early_stopping_rounds=xgb.early_stopping_rounds,
         )
@@ -259,7 +259,7 @@ def train_model(
         w_ho_tr = w_ho_train[:-ho_val_size]
 
         ho_model = XGBRegressor(
-            **best_params, objective="reg:squarederror",
+            **best_params, objective="reg:pseudohubererror",
             random_state=xgb.random_state, verbosity=xgb.verbosity,
             early_stopping_rounds=xgb.early_stopping_rounds,
         )
@@ -274,7 +274,7 @@ def train_model(
     # Train final model on all data (last 15% as early-stopping validation)
     val_size_final = max(1, int(len(X_all) * 0.15))
     final_model = XGBRegressor(
-        **best_params, objective="reg:squarederror",
+        **best_params, objective="reg:pseudohubererror",
         random_state=xgb.random_state, verbosity=xgb.verbosity,
         early_stopping_rounds=xgb.early_stopping_rounds,
     )

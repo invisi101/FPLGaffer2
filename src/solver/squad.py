@@ -173,11 +173,23 @@ def solve_milp_team(
     starters = team_df[team_df["starter"]]
     bench = team_df[~team_df["starter"]]
 
-    # Sort bench: GK first, then outfield by descending predicted points
+    # Sort bench: GK first, then outfield ordered for optimal auto-subs.
+    # Positions at their formation minimum need bench coverage first, since
+    # only a same-position sub can replace them without breaking formation.
     bench_gk = bench[bench["position"] == "GKP"]
-    bench_outfield = bench[bench["position"] != "GKP"].sort_values(
-        target_col, ascending=False,
-    )
+    bench_outfield = bench[bench["position"] != "GKP"].copy()
+    if not bench_outfield.empty:
+        starter_pos_counts = starters["position"].value_counts().to_dict()
+        constrained = set()
+        for pos, (lo, _) in solver_cfg.formation_limits.items():
+            if pos != "GKP" and starter_pos_counts.get(pos, 0) <= lo:
+                constrained.add(pos)
+        bench_outfield["_priority"] = bench_outfield["position"].apply(
+            lambda p: 1 if p in constrained else 0
+        )
+        bench_outfield = bench_outfield.sort_values(
+            ["_priority", target_col], ascending=[False, False],
+        ).drop(columns=["_priority"])
     bench = pd.concat([bench_gk, bench_outfield])
 
     pos_order = {"GKP": 0, "DEF": 1, "MID": 2, "FWD": 3}

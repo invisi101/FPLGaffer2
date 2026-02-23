@@ -31,12 +31,20 @@ Never dismiss, reframe, or minimize failing tests. A failing test is a failing t
 - Check the frontend expects the same fields the backend returns.
 - Compare against the original fplmanager app when in doubt — that's what this was built from.
 
+## Audit Rules
+
+When running a full audit:
+- **List EVERY finding** — every single issue discovered, not just the priorities. Present the complete list to the user.
+- **Do NOT auto-fix** — the user decides what to fix. Present findings, wait for instructions.
+- **Explain in plain English** — assume the user is not a machine learning engineer. Every finding must include: what the issue is, why it matters in FPL terms, and what the fix would do. No jargon without explanation.
+- **When instructed to fix**: explain each change before or while making it — what you're changing, why, and what effect it will have.
+
 ## Environment
 
 - **Python**: Use `.venv/bin/python`, NOT system `python3` (system Python lacks project dependencies)
 - **Run server**: `FLASK_APP=src.api .venv/bin/python -m flask run --port 9876` (serves on `http://127.0.0.1:9876`)
 - **Port 9876**: Often has leftover processes from previous sessions. Kill with `lsof -ti:9876 | xargs kill -9` before starting
-- **Tests**: `.venv/bin/python -m pytest tests/ -v` (100 tests across 3 files)
+- **Tests**: `.venv/bin/python -m pytest tests/ -v` (103 tests across 3 files)
 - **No build step**: Frontend is a single file at `src/templates/index.html` (inline CSS + JS). Just edit and refresh.
 - **Flush the cache**: When told to flush/clear the cache, delete ALL of the following for a complete clean slate:
   - `cache/*` — cached FPL API + GitHub CSV data
@@ -148,7 +156,7 @@ src/
 models/     # Saved .joblib model files (gitignored)
 output/     # predictions.csv, season.db (gitignored)
 cache/      # Cached data: 6h GitHub CSVs, 30m FPL API (gitignored)
-tests/      # 100 tests: correctness (54), integration (17), strategy pipeline (29)
+tests/      # 103 tests: correctness (57), integration (17), strategy pipeline (29)
 ```
 
 ---
@@ -194,7 +202,7 @@ Every magic number is defined in frozen dataclass configs:
 | `SolverConfig` | 0.25 bench weight, -4 hit cost, max budget 1000, 3 per team |
 | `CacheConfig` | GitHub CSV 6h, FPL API 30m, manager API 1m |
 | `PredictionConfig` | Confidence decay 0.95->0.77, pool size 200 |
-| `DecomposedConfig` | Position-specific components, Poisson/squarederror objectives, soft caps |
+| `DecomposedConfig` | Position-specific components, Poisson/logistic objectives, DGW-aware soft caps |
 | `DataConfig` | GitHub CSV base URL, FPL API base URL, earliest season 2024-2025 |
 | `StrategyConfig` | 5-GW planning horizon, max 2 hits/GW, 5 max banked FTs, late-season GW33+, late-season hit cost 3.0 |
 | `FPLScoringRules` | Full FPL points per action by position (incl DefCon thresholds) |
@@ -207,7 +215,7 @@ Import as singletons: `from src.config import xgb, ensemble, solver_cfg, ...`
 
 ### Tier 1: Mean Regression (Primary)
 - 4 models (one per position) for `next_gw_points`
-- XGBoost `reg:squarederror`, walk-forward CV (last 20 splits)
+- XGBoost `reg:pseudohubererror` (Huber loss), walk-forward CV (last 20 splits)
 - Sample weighting: current season 1.0, previous 0.5
 - Fixed hyperparameters: 150 trees, depth 5, lr 0.1, subsample 0.8
 - Early stopping: 20 rounds, using last 20% of training fold as validation (15% for final model)
@@ -223,10 +231,10 @@ Import as singletons: `from src.config import xgb, ensemble, solver_cfg, ...`
   - **DEF**: goals, assists, cs, goals_conceded, bonus, defcon
   - **MID**: goals, assists, cs, bonus, defcon
   - **FWD**: goals, assists, bonus, defcon
-- Poisson objectives for count data (goals, assists, bonus, saves, goals_conceded, defcon), squarederror for CS
+- Poisson objectives for count data (goals, assists, bonus, saves, goals_conceded, defcon), binary:logistic for CS
 - DefCon: Poisson CDF predicts P(CBIT >= threshold) where threshold = 10 (GKP/DEF) or 12 (MID/FWD), scores +2 pts
 - Combined via FPL scoring rules with playing probability weighting
-- Soft calibration caps per position (GKP=7, DEF=8, MID=10, FWD=10)
+- DGW-aware soft calibration caps per position (GKP=7, DEF=8, MID=10, FWD=10), scaled by fixture count
 
 ### Ensemble
 - Production predictions use an **85/15 blend** of mean regression and decomposed sub-models
@@ -253,6 +261,7 @@ Two-tier MILP with optional captain optimization:
 - **Objective**: max(0.75 x starting XI pts + 0.25 x bench pts + captain bonus)
 - **Constraints**: Budget, positions (2/5/5/3), max 3 per team, 11 starters, formation (1 GKP, 3-5 DEF, 2-5 MID, 1-3 FWD), exactly 1 captain who is a starter
 - **Returns**: starters, bench, total_cost, starting_points, captain_id
+- **Bench ordering**: GKP first, then outfield ordered by position priority (formation-constrained positions first) then by predicted points. This ensures auto-subs maintain valid formations.
 
 ### `transfers.py: solve_transfer_milp()` — Optimal transfers
 Same as above plus: `sum(x_i * is_current_i) >= 15 - max_transfers` — keeps at least (15 - N) current players.
@@ -612,9 +621,9 @@ lsof -ti:9876 | xargs kill -9
 FLASK_APP=src.api .venv/bin/python -m flask run --port 9876
 ```
 
-### Test Structure (3 files, 100 tests)
+### Test Structure (3 files, 103 tests)
 
-**`test_correctness.py`** (54 tests, <1 sec) — Mathematical correctness and FPL compliance:
+**`test_correctness.py`** (57 tests, <1 sec) — Mathematical correctness and FPL compliance:
 - Config sanity: decay curve, ensemble weights, captain weights, squad positions, FPL scoring rules, soft caps, DefCon thresholds, late-season config
 - Decomposed scoring formula: P(plays) logic, appearance points, goal/CS/GC/saves/DefCon formulas, soft cap math, DGW summing
 - Ensemble blend: weighted average, boundary properties, mean model dominance
