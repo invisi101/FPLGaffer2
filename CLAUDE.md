@@ -36,7 +36,7 @@ Never dismiss, reframe, or minimize failing tests. A failing test is a failing t
 - **Python**: Use `.venv/bin/python`, NOT system `python3` (system Python lacks project dependencies)
 - **Run server**: `FLASK_APP=src.api .venv/bin/python -m flask run --port 9876` (serves on `http://127.0.0.1:9876`)
 - **Port 9876**: Often has leftover processes from previous sessions. Kill with `lsof -ti:9876 | xargs kill -9` before starting
-- **Tests**: `.venv/bin/python -m pytest tests/ -v` (99 tests across 3 files)
+- **Tests**: `.venv/bin/python -m pytest tests/ -v` (100 tests across 3 files)
 - **No build step**: Frontend is a single file at `src/templates/index.html` (inline CSS + JS). Just edit and refresh.
 - **Flush the cache**: When told to flush/clear the cache, delete ALL of the following for a complete clean slate:
   - `cache/*` — cached FPL API + GitHub CSV data
@@ -148,7 +148,7 @@ src/
 models/     # Saved .joblib model files (gitignored)
 output/     # predictions.csv, season.db (gitignored)
 cache/      # Cached data: 6h GitHub CSVs, 30m FPL API (gitignored)
-tests/      # 99 tests: correctness (53), integration (17), strategy pipeline (29)
+tests/      # 100 tests: correctness (54), integration (17), strategy pipeline (29)
 ```
 
 ---
@@ -189,14 +189,14 @@ Every magic number is defined in frozen dataclass configs:
 
 | Config | Key Values |
 |--------|------------|
-| `XGBConfig` | 150 trees, depth 5, lr 0.1, subsample 0.8, walk-forward 20 splits |
+| `XGBConfig` | 150 trees, depth 5, lr 0.1, subsample 0.8, walk-forward 20 splits, early stopping 20 rounds |
 | `EnsembleConfig` | 85/15 mean/decomposed blend, captain 0.4 mean + 0.6 Q80 |
-| `SolverConfig` | 0.1 bench weight, -4 hit cost, max budget 1000, 3 per team |
+| `SolverConfig` | 0.25 bench weight, -4 hit cost, max budget 1000, 3 per team |
 | `CacheConfig` | GitHub CSV 6h, FPL API 30m, manager API 1m |
 | `PredictionConfig` | Confidence decay 0.95->0.77, pool size 200 |
 | `DecomposedConfig` | Position-specific components, Poisson/squarederror objectives, soft caps |
 | `DataConfig` | GitHub CSV base URL, FPL API base URL, earliest season 2024-2025 |
-| `StrategyConfig` | 5-GW planning horizon, max 1 hit/GW, 5 max banked FTs |
+| `StrategyConfig` | 5-GW planning horizon, max 2 hits/GW, 5 max banked FTs, late-season GW33+, late-season hit cost 3.0 |
 | `FPLScoringRules` | Full FPL points per action by position (incl DefCon thresholds) |
 
 Import as singletons: `from src.config import xgb, ensemble, solver_cfg, ...`
@@ -210,6 +210,7 @@ Import as singletons: `from src.config import xgb, ensemble, solver_cfg, ...`
 - XGBoost `reg:squarederror`, walk-forward CV (last 20 splits)
 - Sample weighting: current season 1.0, previous 0.5
 - Fixed hyperparameters: 150 trees, depth 5, lr 0.1, subsample 0.8
+- Early stopping: 20 rounds, using last 20% of training fold as validation (15% for final model)
 - 3-GW predictions derived at inference by summing three 1-GW predictions with per-GW opponent data
 
 ### Tier 2: Quantile Models (Captain Picks)
@@ -249,7 +250,7 @@ Import as singletons: `from src.config import xgb, ensemble, solver_cfg, ...`
 ### `squad.py: solve_milp_team()` — Optimal squad from scratch
 Two-tier MILP with optional captain optimization:
 - **Variables**: `x_i` (in squad), `s_i` (starter), `c_i` (captain, when `captain_col` provided)
-- **Objective**: max(0.9 x starting XI pts + 0.1 x bench pts + captain bonus)
+- **Objective**: max(0.75 x starting XI pts + 0.25 x bench pts + captain bonus)
 - **Constraints**: Budget, positions (2/5/5/3), max 3 per team, 11 starters, formation (1 GKP, 3-5 DEF, 2-5 MID, 1-3 FWD), exactly 1 captain who is a starter
 - **Returns**: starters, bench, total_cost, starting_points, captain_id
 
@@ -275,12 +276,17 @@ Validates squad against FPL rules (positions, team cap, budget, player count).
 Evaluates all 4 chips (BB, TC, FH, WC) across every remaining GW:
 - Near-term: Uses model predictions (solve MILP for FH/WC, bench sums for BB, best starter for TC)
 - Far-term: Fixture heuristics (DGW count, BGW count, FDR)
+- TC DGW bias: 30% boost for DGW candidates (conservative predictions undervalue TC on DGWs)
+- Late-season chip urgency: Chip values multiplied by urgency factor (1.0 at GW33 -> ~1.6 at GW38) to prevent chip expiry
 - Synergies: WC->BB (build BB-optimized squad), FH+WC (complementary strategy)
 
 ### MultiWeekPlanner (`transfer_planner.py`)
 Rolling **5-GW** transfer planner:
 - Tree search: generates all valid FT allocation sequences, simulates each, picks the path maximizing total points
 - Considers: FT banking (save vs spend at every GW), fixture swings, price change probability
+- Price bonus extends across 3 GWs with decay (1.0, 0.5, 0.25) instead of GW+1 only
+- Late-season hit discount: Effective hit cost reduced from 4 to 3 in GW33+ (fewer future GWs to amortize)
+- Supports up to 2 hits per GW for fixture swing strategies
 - Reduces pool to top 200 players for efficiency
 - Passes `captain_col` to MILP solver for captain-aware squad building
 
@@ -606,10 +612,10 @@ lsof -ti:9876 | xargs kill -9
 FLASK_APP=src.api .venv/bin/python -m flask run --port 9876
 ```
 
-### Test Structure (3 files, 99 tests)
+### Test Structure (3 files, 100 tests)
 
-**`test_correctness.py`** (53 tests, <1 sec) — Mathematical correctness and FPL compliance:
-- Config sanity: decay curve, ensemble weights, captain weights, squad positions, FPL scoring rules, soft caps, DefCon thresholds
+**`test_correctness.py`** (54 tests, <1 sec) — Mathematical correctness and FPL compliance:
+- Config sanity: decay curve, ensemble weights, captain weights, squad positions, FPL scoring rules, soft caps, DefCon thresholds, late-season config
 - Decomposed scoring formula: P(plays) logic, appearance points, goal/CS/GC/saves/DefCon formulas, soft cap math, DGW summing
 - Ensemble blend: weighted average, boundary properties, mean model dominance
 - Captain score: formula values, Q80 weighting, NaN fallback, doubling mechanics
@@ -672,7 +678,7 @@ Key FPL rules that affect codebase logic:
 
 - **Static team_code for transferred players**: Uses player's CURRENT team from bootstrap. Pre-transfer matches get wrong team assignment. Fix requires per-match data not in public API.
 - **fixture_congestion includes predicted match's own rest**: Borderline design choice — fixture schedule is known in advance.
-- **FT planner explores at most 1 hit per GW**: Taking 2+ hits is almost never profitable.
+- **FT planner explores at most 2 hits per GW**: Taking 3+ hits is almost never profitable. Max 3 transfers per GW keeps search tractable.
 - **3-GW prediction is a simple sum**: No adjustment for form regression or rotation risk.
 - **Selling prices partially use `now_cost`**: Budget calculation uses `entry_history["value"]` (correct). However, the MILP solver still uses `now_cost` for individual player costs since the public API doesn't provide per-player selling prices (50% profit sharing on price rises). This means the solver may slightly overestimate available budget when selling players whose prices have risen.
 
@@ -739,7 +745,7 @@ Run this exact command:
 .venv/bin/python -m pytest tests/ -v
 ```
 
-**Expected**: 99+ tests, 0 failures. If ANY test fails, stop and fix it before proceeding. Do not proceed to Phase 2 with failing tests. Report the exact pass/fail count.
+**Expected**: 100+ tests, 0 failures. If ANY test fails, stop and fix it before proceeding. Do not proceed to Phase 2 with failing tests. Report the exact pass/fail count.
 
 Test coverage:
 - `test_correctness.py` — FPL scoring formulas, ensemble blend math, captain score, confidence decay, solver FPL compliance, prediction properties

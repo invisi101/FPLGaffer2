@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.config import strategy_cfg
 from src.logging_config import get_logger
 from src.solver.squad import solve_milp_team
 
@@ -91,6 +92,18 @@ class ChipEvaluator:
                 current_squad_ids, total_budget, future_predictions,
                 fx_by_gw, all_gws, pred_gws,
             )
+
+        # Late-season chip urgency: unused chips approaching expiry
+        current_gw = min(pred_gws) if pred_gws else min(all_gws)
+        if current_gw >= strategy_cfg.late_season_gw:
+            # Urgency ramps from 1.0 at GW33 to ~1.6 at GW38
+            gws_past = current_gw - strategy_cfg.late_season_gw
+            urgency = 1.0 + 0.12 * gws_past
+            for chip_name in chip_values:
+                for gw in chip_values[chip_name]:
+                    chip_values[chip_name][gw] = round(
+                        chip_values[chip_name][gw] * urgency, 1,
+                    )
 
         return chip_values
 
@@ -196,6 +209,8 @@ class ChipEvaluator:
         """Triple Captain value per GW.
 
         Within prediction horizon: best player's predicted points (extra 1x).
+        DGW players get a 30% boost since conservative predictions
+        undervalue TC timing on double gameweeks.
         Beyond: heuristic based on DGW + low FDR.
         """
         from src.strategy.transfer_planner import MultiWeekPlanner
@@ -225,6 +240,18 @@ class ChipEvaluator:
                     )
                     best_idx = xi[score_col].idxmax()
                     best = xi.loc[best_idx, "predicted_points"]
+
+                    # DGW boost: TC on a DGW player is more valuable
+                    # because the player scores in two matches.
+                    n_dgw = self._count_dgw_teams(fx_by_gw, gw)
+                    if n_dgw > 0 and "team_code" in xi.columns:
+                        candidate_row = xi.loc[best_idx]
+                        tc_code = candidate_row.get("team_code")
+                        if tc_code and gw in fx_by_gw:
+                            tc_fx = fx_by_gw[gw].get(int(tc_code), {})
+                            if tc_fx.get("is_dgw"):
+                                best *= 1.3
+
                     values[gw] = round(best, 1)
                 else:
                     values[gw] = 0.0

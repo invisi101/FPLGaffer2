@@ -190,11 +190,18 @@ def train_model(
         X_test = pos_df.loc[test_mask, available_feats].values
         y_test = pos_df.loc[test_mask, target].values
 
+        # Early stopping: use last 20% of training fold as validation
+        val_size = max(1, int(len(X_train) * 0.2))
+        X_tr, X_val = X_train[:-val_size], X_train[-val_size:]
+        y_tr, y_val = y_train[:-val_size], y_train[-val_size:]
+        w_tr = w_train[:-val_size]
+
         model = XGBRegressor(
             **best_params, objective="reg:squarederror",
             random_state=xgb.random_state, verbosity=xgb.verbosity,
+            early_stopping_rounds=xgb.early_stopping_rounds,
         )
-        model.fit(X_train, y_train, sample_weight=w_train)
+        model.fit(X_tr, y_tr, sample_weight=w_tr, eval_set=[(X_val, y_val)], verbose=False)
         preds = model.predict(X_test)
         maes.append(mean_absolute_error(y_test, preds))
         residuals = y_test - preds
@@ -241,25 +248,42 @@ def train_model(
     holdout_mask = pos_df["_seq_gw"].isin(holdout_gws)
     train_mask_ho = ~holdout_mask
     if train_mask_ho.sum() >= 50 and holdout_mask.sum() >= 10:
+        X_ho_train = pos_df.loc[train_mask_ho, available_feats].values
+        y_ho_train = pos_df.loc[train_mask_ho, target].values
+        w_ho_train = pos_df.loc[train_mask_ho, "_sample_weight"].values
+
+        # Early stopping: use last 20% of holdout training data as validation
+        ho_val_size = max(1, int(len(X_ho_train) * 0.2))
+        X_ho_tr, X_ho_val = X_ho_train[:-ho_val_size], X_ho_train[-ho_val_size:]
+        y_ho_tr, y_ho_val = y_ho_train[:-ho_val_size], y_ho_train[-ho_val_size:]
+        w_ho_tr = w_ho_train[:-ho_val_size]
+
         ho_model = XGBRegressor(
             **best_params, objective="reg:squarederror",
             random_state=xgb.random_state, verbosity=xgb.verbosity,
+            early_stopping_rounds=xgb.early_stopping_rounds,
         )
         ho_model.fit(
-            pos_df.loc[train_mask_ho, available_feats].values,
-            pos_df.loc[train_mask_ho, target].values,
-            sample_weight=pos_df.loc[train_mask_ho, "_sample_weight"].values,
+            X_ho_tr, y_ho_tr, sample_weight=w_ho_tr,
+            eval_set=[(X_ho_val, y_ho_val)], verbose=False,
         )
         ho_preds = ho_model.predict(pos_df.loc[holdout_mask, available_feats].values)
         holdout_mae = mean_absolute_error(pos_df.loc[holdout_mask, target].values, ho_preds)
         log.info("    Holdout MAE (last 3 GWs): %.3f", holdout_mae)
 
-    # Train final model on all data
+    # Train final model on all data (last 15% as early-stopping validation)
+    val_size_final = max(1, int(len(X_all) * 0.15))
     final_model = XGBRegressor(
         **best_params, objective="reg:squarederror",
         random_state=xgb.random_state, verbosity=xgb.verbosity,
+        early_stopping_rounds=xgb.early_stopping_rounds,
     )
-    final_model.fit(X_all, y_all, sample_weight=w_all)
+    final_model.fit(
+        X_all[:-val_size_final], y_all[:-val_size_final],
+        sample_weight=w_all[:-val_size_final],
+        eval_set=[(X_all[-val_size_final:], y_all[-val_size_final:])],
+        verbose=False,
+    )
 
     # Persist
     save_model(final_model, position, target, metadata={

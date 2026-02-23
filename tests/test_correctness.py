@@ -125,6 +125,11 @@ class TestConfigSanity:
     def test_bench_weight_in_range(self):
         assert 0 < solver_cfg.bench_weight < 0.5
 
+    def test_late_season_config_valid(self):
+        from src.config import strategy_cfg
+        assert 30 <= strategy_cfg.late_season_gw <= 36
+        assert 0 < strategy_cfg.late_season_hit_cost < solver_cfg.hit_cost
+
 
 # ===========================================================================
 # 2. FPL scoring formula (decomposed.py)

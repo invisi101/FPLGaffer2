@@ -17,6 +17,7 @@ class XGBConfig:
     colsample_bytree: float = 0.8
     random_state: int = 42
     verbosity: int = 0
+    early_stopping_rounds: int = 20
 
     # Sub-model overrides
     sub_model_max_depth: int = 4
@@ -46,7 +47,7 @@ class EnsembleConfig:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SolverConfig:
-    bench_weight: float = 0.1
+    bench_weight: float = 0.25
     hit_cost: float = 4.0
     max_budget: float = 1000.0
     team_cap: int = 3
@@ -351,8 +352,10 @@ class DataConfig:
 @dataclass(frozen=True)
 class StrategyConfig:
     planning_horizon: int = 5        # GWs ahead for transfer planner
-    max_hits_per_gw: int = 1         # Max hit transfers explored per GW
+    max_hits_per_gw: int = 2         # Max hit transfers explored per GW
     ft_max_bank: int = 5             # Max banked free transfers
+    late_season_gw: int = 33         # GW from which late-season mode activates
+    late_season_hit_cost: float = 3.0  # Reduced hit cost in late season
 
 
 # ---------------------------------------------------------------------------

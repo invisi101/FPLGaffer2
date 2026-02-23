@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.config import strategy_cfg
+from src.config import solver_cfg, strategy_cfg
 from src.logging_config import get_logger
 from src.solver.squad import solve_milp_team
 
@@ -316,6 +316,9 @@ class MultiWeekPlanner:
         squad_ids = set(current_squad_ids)
         budget = total_budget
         ft = free_transfers
+        late_season = bool(
+            plan_gws and plan_gws[0] >= strategy_cfg.late_season_gw
+        )
 
         for i, gw in enumerate(plan_gws):
             if gw not in filtered_preds:
@@ -328,11 +331,12 @@ class MultiWeekPlanner:
             if chip_plan:
                 gw_chip = chip_plan.get("chip_gws", {}).get(gw)
 
-            # Apply price bonus to predicted_points
-            if price_bonus and i == 0:  # Only for immediate GW
+            # Apply price bonus with decay (most urgent for immediate GW)
+            if price_bonus and i < 3:
+                decay = (1.0, 0.5, 0.25)[i]
                 gw_df["predicted_points"] = gw_df.apply(
-                    lambda r: r["predicted_points"]
-                    + price_bonus.get(r["player_id"], 0),
+                    lambda r, d=decay: r["predicted_points"]
+                    + price_bonus.get(r["player_id"], 0) * d,
                     axis=1,
                 )
 
@@ -387,7 +391,7 @@ class MultiWeekPlanner:
             else:
                 step = self._simulate_transfer_gw(
                     gw, gw_chip, gw_df, squad_ids, budget, ft, use_now,
-                    solve_transfer_fn,
+                    solve_transfer_fn, late_season=late_season,
                 )
                 if step is None:
                     return None
@@ -499,7 +503,7 @@ class MultiWeekPlanner:
 
     def _simulate_transfer_gw(
         self, gw, gw_chip, gw_df, squad_ids, budget, ft, use_now,
-        solve_transfer_fn,
+        solve_transfer_fn, *, late_season: bool = False,
     ) -> dict | None:
         """Simulate a GW with active transfers."""
         pool = gw_df.dropna(subset=["predicted_points"])
@@ -535,6 +539,16 @@ class MultiWeekPlanner:
             new_squad_ids = {p["player_id"] for p in result["players"]}
             transfers_out = squad_ids - new_squad_ids
             transfers_in = new_squad_ids - squad_ids
+
+            # Late-season: reduce effective hit cost (solver applied -4,
+            # but in late season we value hits at -3)
+            if late_season:
+                hits = max(0, len(transfers_in) - ft)
+                if hits > 0:
+                    discount = hits * (
+                        solver_cfg.hit_cost - strategy_cfg.late_season_hit_cost
+                    )
+                    pts += discount
 
             # Build player metadata lookup from gw_df for transfers_out
             out_meta: dict[int, dict] = {}
