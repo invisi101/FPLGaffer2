@@ -34,8 +34,8 @@ Never dismiss, reframe, or minimize failing tests. A failing test is a failing t
 ## Environment
 
 - **Python**: Use `.venv/bin/python`, NOT system `python3` (system Python lacks project dependencies)
-- **Run server**: `FLASK_APP=src.api .venv/bin/python -m flask run --port 9874` (serves on `http://127.0.0.1:9874`)
-- **Port 9874**: Often has leftover processes from previous sessions. Kill with `lsof -ti:9874 | xargs kill -9` before starting
+- **Run server**: `FLASK_APP=src.api .venv/bin/python -m flask run --port 9876` (serves on `http://127.0.0.1:9876`)
+- **Port 9876**: Often has leftover processes from previous sessions. Kill with `lsof -ti:9876 | xargs kill -9` before starting
 - **Tests**: `.venv/bin/python -m pytest tests/test_integration.py -v` (17 integration tests)
 - **No build step**: Frontend is a single file at `src/templates/index.html` (inline CSS + JS). Just edit and refresh.
 - **Flush the cache**: When told to flush/clear the cache, delete ALL of the following for a complete clean slate:
@@ -594,7 +594,7 @@ gw_mins["played"] = gw_mins["minutes_played"] > 0
 
 ```bash
 # Kill leftover server
-lsof -ti:9874 | xargs kill -9
+lsof -ti:9876 | xargs kill -9
 
 # Run all tests (99 total, ~5 min)
 .venv/bin/python -m pytest tests/ -v
@@ -603,7 +603,7 @@ lsof -ti:9874 | xargs kill -9
 .venv/bin/python -m pytest tests/test_correctness.py tests/test_integration.py -v
 
 # Start server
-FLASK_APP=src.api .venv/bin/python -m flask run --port 9874
+FLASK_APP=src.api .venv/bin/python -m flask run --port 9876
 ```
 
 ### Test Structure (3 files, 99 tests)
@@ -637,16 +637,16 @@ FLASK_APP=src.api .venv/bin/python -m flask run --port 9874
 ### Key test commands
 ```bash
 # Action plan
-curl -s "http://127.0.0.1:9874/api/season/action-plan?manager_id=12904702"
+curl -s "http://127.0.0.1:9876/api/season/action-plan?manager_id=12904702"
 
 # Strategic plan
-curl -s "http://127.0.0.1:9874/api/season/strategic-plan?manager_id=12904702"
+curl -s "http://127.0.0.1:9876/api/season/strategic-plan?manager_id=12904702"
 
 # Plan health
-curl -s "http://127.0.0.1:9874/api/season/plan-health?manager_id=12904702"
+curl -s "http://127.0.0.1:9876/api/season/plan-health?manager_id=12904702"
 
 # Dashboard
-curl -s "http://127.0.0.1:9874/api/season/dashboard?manager_id=12904702"
+curl -s "http://127.0.0.1:9876/api/season/dashboard?manager_id=12904702"
 ```
 
 ---
@@ -944,23 +944,23 @@ Write a standalone Python script (in `/private/tmp/`) that tests each specific c
 ### Step 2: Walk-Forward Backtest (Before/After)
 ```bash
 # Kill leftover processes
-lsof -ti:9874 | xargs kill -9
+lsof -ti:9876 | xargs kill -9
 
 # Baseline
 git stash
-FLASK_APP=src.api .venv/bin/python -m flask run --port 9874 &
+FLASK_APP=src.api .venv/bin/python -m flask run --port 9876 &
 sleep 5
-curl -s -X POST http://127.0.0.1:9874/api/backtest -H 'Content-Type: application/json' -d '{"start_gw":10,"end_gw":27}'
+curl -s -X POST http://127.0.0.1:9876/api/backtest -H 'Content-Type: application/json' -d '{"start_gw":10,"end_gw":27}'
 # Wait for completion (check /api/status SSE stream)
-curl -s http://127.0.0.1:9874/api/backtest-results > /private/tmp/backtest_baseline.json
-lsof -ti:9874 | xargs kill -9
+curl -s http://127.0.0.1:9876/api/backtest-results > /private/tmp/backtest_baseline.json
+lsof -ti:9876 | xargs kill -9
 
 # After changes
 git stash pop
-FLASK_APP=src.api .venv/bin/python -m flask run --port 9874 &
+FLASK_APP=src.api .venv/bin/python -m flask run --port 9876 &
 sleep 5
-curl -s -X POST http://127.0.0.1:9874/api/backtest -H 'Content-Type: application/json' -d '{"start_gw":10,"end_gw":27}'
-curl -s http://127.0.0.1:9874/api/backtest-results > /private/tmp/backtest_postfix.json
+curl -s -X POST http://127.0.0.1:9876/api/backtest -H 'Content-Type: application/json' -d '{"start_gw":10,"end_gw":27}'
+curl -s http://127.0.0.1:9876/api/backtest-results > /private/tmp/backtest_postfix.json
 ```
 
 ### Key Metrics
@@ -985,14 +985,14 @@ curl -s http://127.0.0.1:9874/api/backtest-results > /private/tmp/backtest_postf
 ### Quick Reference
 ```bash
 # Fetch results summary
-curl -s http://127.0.0.1:9874/api/backtest-results | python3 -c "
+curl -s http://127.0.0.1:9876/api/backtest-results | python3 -c "
 import sys,json; r=json.load(sys.stdin); s=r['summary']
 print(f'MAE={s[\"model_avg_mae\"]:.4f} rho={s[\"avg_spearman\"]:.4f} top11={s[\"model_avg_top11_pts\"]:.1f} cap%={s[\"model_capture_pct\"]:.1f}%')
 print(f'vs ep: {s[\"model_wins\"]}W-{s[\"ep_wins\"]}L | MAE p={s.get(\"mae_pvalue\",\"?\")}')
 "
 
 # Spot-check top predicted players
-curl -s http://127.0.0.1:9874/api/predictions | python3 -c "
+curl -s http://127.0.0.1:9876/api/predictions | python3 -c "
 import sys,json; d=json.load(sys.stdin)['players']
 d.sort(key=lambda x: x.get('predicted_next_gw_points',0), reverse=True)
 for p in d[:10]:

@@ -1,0 +1,76 @@
+name: Build GafferAI
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build with PyInstaller
+        run: pyinstaller gaffer-windows.spec
+
+      - name: Zip output folder
+        run: Compress-Archive -Path "dist/GafferAI" -DestinationPath GafferAI-Windows.zip
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: GafferAI-Windows.zip
+
+      - name: Upload as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GafferAI-Windows
+          path: GafferAI-Windows.zip
+
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build with PyInstaller
+        run: pyinstaller gaffer-mac.spec
+
+      - name: Zip output folder
+        run: cd dist && zip -r ../GafferAI-macOS.zip GafferAI.app
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: GafferAI-macOS.zip
+
+      - name: Upload as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GafferAI-macOS
+          path: GafferAI-macOS.zip

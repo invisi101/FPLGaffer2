@@ -7,7 +7,7 @@ import time
 import traceback
 import webbrowser
 
-URL = "http://127.0.0.1:9874"
+URL = "http://127.0.0.1:9876"
 
 
 def open_browser():
@@ -27,7 +27,7 @@ if __name__ == "__main__":
         from src.api import create_app
 
         app = create_app()
-        app.run(host="127.0.0.1", port=9874, debug=False, threaded=True)
+        app.run(host="127.0.0.1", port=9876, debug=False, threaded=True)
     except Exception:
         traceback.print_exc()
         input("\nPress Enter to exit...")
