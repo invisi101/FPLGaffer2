@@ -733,6 +733,7 @@ def api_player_detail(player_id):
         "expected_goals": player_el.get("expected_goals", "0.00"),
         "expected_assists": player_el.get("expected_assists", "0.00"),
         "ict_index": player_el.get("ict_index", "0.0"),
+        "selected_by_percent": player_el.get("selected_by_percent", "0.0"),
     }
 
     # Per-GW history from element-summary API
@@ -752,6 +753,7 @@ def api_player_detail(player_id):
                 "bonus": h.get("bonus", 0),
                 "bps": h.get("bps", 0),
                 "saves": h.get("saves", 0),
+                "starts": h.get("starts", 0),
                 "opponent_team": h.get("opponent_team"),
                 "was_home": h.get("was_home"),
                 "xg": safe_num(h.get("expected_goals", 0), 2),
@@ -799,6 +801,9 @@ def api_player_detail(player_id):
                 "predicted_next_gw_points": safe_num(pr.get("predicted_next_gw_points", 0), 2),
                 "captain_score": safe_num(pr.get("captain_score", 0), 2),
                 "predicted_next_3gw_points": safe_num(pr.get("predicted_next_3gw_points", 0), 2),
+                "prediction_low": safe_num(pr.get("prediction_low"), 2),
+                "prediction_high": safe_num(pr.get("prediction_high"), 2),
+                "q80": safe_num(pr.get("predicted_next_gw_points_q80"), 2),
             }
 
     # Price history
@@ -822,6 +827,202 @@ def api_player_detail(player_id):
         "predictions": predictions,
         "price_history": price_history,
     })
+
+
+# ---------------------------------------------------------------------------
+# Player Explain ("but, how?")
+# ---------------------------------------------------------------------------
+
+@core_bp.route("/api/players/<int:player_id>/explain")
+def api_player_explain(player_id):
+    """Return a full prediction breakdown for the explainer page."""
+    from src.config import FEATURE_LABELS, ensemble as ens_cfg
+    from src.ml.model_store import load_model as _load_model
+
+    bootstrap = load_bootstrap()
+    if not bootstrap:
+        return jsonify({"error": "No data available. Refresh data first."}), 400
+
+    pos_map = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
+    team_map_full = {t["id"]: t for t in bootstrap.get("teams", [])}
+    id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
+    code_to_short = {t["code"]: t["short_name"] for t in bootstrap.get("teams", [])}
+
+    # Find the player in bootstrap
+    player_el = None
+    for el in bootstrap.get("elements", []):
+        if el["id"] == player_id:
+            player_el = el
+            break
+    if not player_el:
+        return jsonify({"error": f"Player {player_id} not found."}), 404
+
+    position = pos_map.get(player_el.get("element_type"), "MID")
+    team = team_map_full.get(player_el.get("team"), {})
+    web_name = player_el.get("web_name", "Unknown")
+
+    # Load component details from predictions_detail.json
+    detail_path = OUTPUT_DIR / "predictions_detail.json"
+    components = {}
+    if detail_path.exists():
+        try:
+            raw = json.loads(detail_path.read_text(encoding="utf-8"))
+            components = raw.get("players", {}).get(str(player_id), {})
+        except Exception:
+            pass
+
+    # Load predictions CSV for the player's final prediction
+    pred_df = load_predictions_from_csv()
+    final_pred = 0
+    captain_score = 0
+    pred_low = None
+    pred_high = None
+    if pred_df is not None:
+        p_row = pred_df[pred_df["player_id"] == player_id]
+        if not p_row.empty:
+            pr = p_row.iloc[0]
+            final_pred = safe_num(pr.get("predicted_next_gw_points", 0), 2)
+            captain_score = safe_num(pr.get("captain_score", 0), 2)
+            pred_low = safe_num(pr.get("prediction_low"), 2)
+            pred_high = safe_num(pr.get("prediction_high"), 2)
+
+    # Build mean/decomposed model breakdown
+    mean_pred = components.get("mean_pred", final_pred)
+    decomp_pred = components.get("decomp_pred", 0)
+    ensemble_pred = components.get("ensemble_pred", final_pred)
+    w_d = ens_cfg.decomposed_weight
+    w_m = 1 - w_d
+
+    mean_model_info = {"prediction": round(float(mean_pred), 2), "weight": w_m}
+    decomp_model_info = {
+        "prediction": round(float(decomp_pred), 2),
+        "weight": w_d,
+        "components": {},
+        "p_plays": round(float(components.get("p_plays", 0)), 2),
+        "p_60plus": round(float(components.get("p_60plus", 0)), 2),
+    }
+
+    # Build component breakdown
+    comp_names = {
+        "appearance": "Appearance",
+        "goals": "Goals",
+        "assists": "Assists",
+        "cs": "Clean Sheets",
+        "gc": "Goals Conceded",
+        "saves": "Saves",
+        "bonus": "Bonus",
+        "defcon": "DefCon",
+    }
+    for comp_key, label in comp_names.items():
+        sub_val = components.get(f"sub_{comp_key}", 0)
+        pts_val = components.get(f"pts_{comp_key}", 0)
+        if sub_val or pts_val:
+            decomp_model_info["components"][comp_key] = {
+                "label": label,
+                "raw": round(float(sub_val), 4),
+                "pts": round(float(pts_val), 2),
+            }
+
+    # Captain info
+    q80_val = components.get("q80_pred")
+    captain_info = {
+        "score": round(float(captain_score), 2),
+        "q80_prediction": round(float(q80_val), 2) if q80_val else None,
+        "formula": (
+            f"{ens_cfg.captain_mean_weight} x {round(float(mean_pred), 2)} + "
+            f"{ens_cfg.captain_q80_weight} x {round(float(q80_val), 2)}"
+        ) if q80_val else None,
+    }
+
+    # Confidence interval
+    confidence = {
+        "low": pred_low,
+        "high": pred_high,
+    }
+
+    # Top features from the mean model
+    top_features = []
+    model_dict = _load_model(position, "next_gw_points")
+    if model_dict is not None:
+        model = model_dict["model"]
+        features = model_dict["features"]
+        importances = model.feature_importances_
+
+        # Get the player's current feature values from predictions CSV
+        feature_values = {}
+        if pred_df is not None:
+            p_row = pred_df[pred_df["player_id"] == player_id]
+            if not p_row.empty:
+                pr = p_row.iloc[0]
+                for f in features:
+                    if f in pr.index and pd.notna(pr[f]):
+                        feature_values[f] = round(float(pr[f]), 4)
+
+        # Sort by importance and take top 10
+        sorted_idx = sorted(range(len(importances)), key=lambda i: importances[i], reverse=True)
+        for idx in sorted_idx[:10]:
+            fname = features[idx]
+            top_features.append({
+                "name": fname,
+                "label": FEATURE_LABELS.get(fname, fname.replace("_", " ").title()),
+                "importance": round(float(importances[idx]), 4),
+                "value": feature_values.get(fname),
+            })
+
+    # Fixture info
+    fixture_info = {}
+    next_gw = get_next_gw(bootstrap)
+    fixtures_path = CACHE_DIR / "fpl_api_fixtures.json"
+    if fixtures_path.exists() and next_gw:
+        try:
+            all_fixtures = json.loads(fixtures_path.read_text(encoding="utf-8"))
+            player_team_id = player_el.get("team")
+            for f in all_fixtures:
+                if f.get("event") == next_gw:
+                    if f["team_h"] == player_team_id:
+                        opp_code = id_to_code.get(f["team_a"])
+                        fixture_info = {
+                            "opponent": code_to_short.get(opp_code, "?"),
+                            "is_home": True,
+                            "fdr": f.get("team_h_difficulty", 3),
+                            "is_dgw": False,
+                        }
+                        break
+                    elif f["team_a"] == player_team_id:
+                        opp_code = id_to_code.get(f["team_h"])
+                        fixture_info = {
+                            "opponent": code_to_short.get(opp_code, "?"),
+                            "is_home": False,
+                            "fdr": f.get("team_a_difficulty", 3),
+                            "is_dgw": False,
+                        }
+                        break
+            # Check for DGW
+            dgw_count = sum(
+                1 for f in all_fixtures
+                if f.get("event") == next_gw
+                and (f["team_h"] == player_team_id or f["team_a"] == player_team_id)
+            )
+            if dgw_count > 1:
+                fixture_info["is_dgw"] = True
+        except Exception:
+            pass
+
+    return jsonify(scrub_nan({
+        "player_id": player_id,
+        "web_name": web_name,
+        "position": position,
+        "team_code": team.get("code"),
+        "team_short": team.get("short_name", ""),
+        "photo_code": player_el.get("code", 0),
+        "final_prediction": round(float(final_pred), 2),
+        "mean_model": mean_model_info,
+        "decomposed_model": decomp_model_info,
+        "captain": captain_info,
+        "confidence": confidence,
+        "top_features": top_features,
+        "fixture": fixture_info,
+    }))
 
 
 # ---------------------------------------------------------------------------

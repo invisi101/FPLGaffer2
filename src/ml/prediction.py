@@ -162,6 +162,10 @@ def _ensemble_predict_position(
         else pd.DataFrame()
     )
 
+    # Store mean-only predictions for the explainer
+    if decomp_cache is not None and not mean_preds.empty:
+        decomp_cache[f"{position}_mean"] = mean_preds[["player_id", pred_col]].copy()
+
     w_d = ensemble.decomposed_weight
     w_m = 1 - w_d
 
@@ -315,17 +319,41 @@ def generate_predictions(
     component_details: dict[int, dict] = {}
     for position in POSITION_GROUPS:
         decomp = _decomp_cache.get(position, pd.DataFrame())
+        mean_df = _decomp_cache.get(f"{position}_mean", pd.DataFrame())
+
+        # Build a lookup of mean predictions by player_id
+        mean_by_pid: dict[int, float] = {}
+        if not mean_df.empty:
+            for _, mr in mean_df.iterrows():
+                mean_by_pid[int(mr["player_id"])] = round(float(mr.get("predicted_next_gw_points", 0)), 4)
+
         if not decomp.empty:
             sub_cols = [c for c in decomp.columns if c.startswith("sub_") or c.startswith("pts_")]
             keep_cols = ["player_id"] + sub_cols + ["p_plays", "p_60plus"]
             keep_cols = [c for c in keep_cols if c in decomp.columns]
             for _, row in decomp[keep_cols].iterrows():
                 pid = int(row["player_id"])
-                component_details[pid] = {
+                detail = {
                     c: round(float(row[c]), 4) if pd.notna(row[c]) else 0
                     for c in keep_cols
                     if c != "player_id"
                 }
+                # Add mean/decomp/ensemble predictions for explainer
+                decomp_total = round(float(row.get("predicted_next_gw_points", 0)), 4) if "predicted_next_gw_points" in decomp.columns else 0
+                mean_val = mean_by_pid.get(pid, 0)
+                detail["mean_pred"] = mean_val
+                detail["decomp_pred"] = decomp_total
+                w_d = ensemble.decomposed_weight
+                w_m = 1 - w_d
+                if mean_val and decomp_total:
+                    detail["ensemble_pred"] = round(w_d * decomp_total + w_m * mean_val, 4)
+                else:
+                    detail["ensemble_pred"] = mean_val or decomp_total
+                component_details[pid] = detail
+        elif not mean_df.empty:
+            # No decomposed model for this position, just store mean predictions
+            for pid, val in mean_by_pid.items():
+                component_details[pid] = {"mean_pred": val, "decomp_pred": 0, "ensemble_pred": val}
 
     # --- Quantile predictions for captain scoring (MID/FWD only) ---
     q80_preds: list[pd.DataFrame] = []
@@ -355,6 +383,21 @@ def generate_predictions(
         )
     elif "predicted_next_gw_points" in result.columns:
         result["captain_score"] = result["predicted_next_gw_points"]
+
+    # --- Enrich component_details with Q80, captain score, intervals ---
+    for _, row in result.iterrows():
+        pid = int(row["player_id"])
+        if pid not in component_details:
+            component_details[pid] = {}
+        detail = component_details[pid]
+        if "predicted_next_gw_points_q80" in result.columns and pd.notna(row.get("predicted_next_gw_points_q80")):
+            detail["q80_pred"] = round(float(row["predicted_next_gw_points_q80"]), 4)
+        if pd.notna(row.get("captain_score")):
+            detail["captain_score"] = round(float(row["captain_score"]), 4)
+        if pd.notna(row.get("prediction_low")):
+            detail["prediction_low"] = round(float(row["prediction_low"]), 4)
+        if pd.notna(row.get("prediction_high")):
+            detail["prediction_high"] = round(float(row["prediction_high"]), 4)
 
     # --- Availability adjustments: zero predictions for unavailable players ---
     unavailable_ids: set[int] = set()

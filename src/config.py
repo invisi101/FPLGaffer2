@@ -399,3 +399,107 @@ fpl_scoring = FPLScoringRules()
 decomposed = DecomposedConfig()
 data_cfg = DataConfig()
 strategy_cfg = StrategyConfig()
+
+
+# ---------------------------------------------------------------------------
+# Human-readable feature labels (for the "but, how?" explainer)
+# ---------------------------------------------------------------------------
+FEATURE_LABELS: dict[str, str] = {
+    # Player rolling stats
+    "player_xg_last3": "Expected Goals (3-GW)",
+    "player_xg_last5": "Expected Goals (5-GW)",
+    "player_xa_last3": "Expected Assists (3-GW)",
+    "player_xa_last5": "Expected Assists (5-GW)",
+    "player_xgot_last3": "xG on Target (3-GW)",
+    "player_shots_on_target_last3": "Shots on Target (3-GW)",
+    "player_shots_on_target_last5": "Shots on Target (5-GW)",
+    "player_total_shots_last3": "Total Shots (3-GW)",
+    "player_touches_opposition_box_last3": "Box Touches (3-GW)",
+    "player_touches_opposition_box_last5": "Box Touches (5-GW)",
+    "player_chances_created_last3": "Chances Created (3-GW)",
+    "player_successful_dribbles_last3": "Successful Dribbles (3-GW)",
+    "player_accurate_crosses_last3": "Accurate Crosses (3-GW)",
+    "player_tackles_won_last3": "Tackles Won (3-GW)",
+    "player_interceptions_last3": "Interceptions (3-GW)",
+    "player_recoveries_last3": "Recoveries (3-GW)",
+    "player_recoveries_last5": "Recoveries (5-GW)",
+    "player_clearances_last3": "Clearances (3-GW)",
+    "player_blocks_last3": "Blocks (3-GW)",
+    "player_aerial_duels_won_last3": "Aerial Duels Won (3-GW)",
+    "player_minutes_played_last3": "Minutes Played (3-GW avg)",
+    "player_minutes_played_last5": "Minutes Played (5-GW avg)",
+    "player_goals_last3": "Goals Scored (3-GW)",
+    "player_assists_last3": "Assists (3-GW)",
+    "player_big_chances_missed_last3": "Big Chances Missed (3-GW)",
+    "player_saves_last3": "Saves (3-GW)",
+    "player_saves_last5": "Saves (5-GW)",
+    "player_cbit_last3": "CBIT Defensive Actions (3-GW)",
+    "player_cbit_last5": "CBIT Defensive Actions (5-GW)",
+    # EWM features
+    "ewm_player_xg_last3": "xG Trend (EWM)",
+    "ewm_player_xa_last3": "xA Trend (EWM)",
+    "ewm_player_xgot_last3": "xGOT Trend (EWM)",
+    "ewm_player_chances_created_last3": "Chances Created Trend (EWM)",
+    "ewm_player_shots_on_target_last3": "Shots on Target Trend (EWM)",
+    # Opponent stats
+    "opp_goals_conceded_last3": "Opp Goals Conceded (3-GW)",
+    "opp_xg_conceded_last3": "Opp xG Conceded (3-GW)",
+    "opp_big_chances_allowed_last3": "Opp Big Chances Allowed (3-GW)",
+    "opp_opponent_xg_last3": "Opp xG Created (3-GW)",
+    "opp_opponent_shots_on_target_last3": "Opp Shots on Target (3-GW)",
+    "opp_goals_scored_last3": "Opp Goals Scored (3-GW)",
+    "opp_xg_last3": "Opp xG (3-GW)",
+    # Fixture context
+    "fdr": "Fixture Difficulty Rating",
+    "is_home": "Home Advantage",
+    "opponent_elo": "Opponent Strength (Elo)",
+    "next_gw_fixture_count": "Fixtures This GW",
+    # Interaction features
+    "xg_x_opp_goals_conceded": "xG vs Opp Defensive Weakness",
+    "chances_x_opp_big_chances": "Chances vs Opp Defensive Gaps",
+    "cs_opportunity": "Clean Sheet Opportunity",
+    "venue_matched_form": "Venue-Matched Form",
+    # Team stats
+    "team_clean_sheet_last3": "Team Clean Sheets (3-GW)",
+    "team_goals_scored_last3": "Team Goals Scored (3-GW)",
+    "team_xg_last3": "Team xG (3-GW)",
+    "team_big_chances_last3": "Team Big Chances (3-GW)",
+    "team_form_5": "Team Form (5-GW)",
+    # Per-90 stats
+    "saves_per_90": "Saves per 90",
+    "clean_sheets_per_90": "Clean Sheets per 90",
+    "starts_per_90": "Starts per 90",
+    "xgc_per_90": "xGC per 90",
+    # ICT / BPS
+    "gw_player_bps": "Bonus Point System Score",
+    "gw_ict_index": "ICT Index",
+    "gw_influence": "Influence",
+    "gw_threat": "Threat",
+    "gw_creativity": "Creativity",
+    # Market data
+    "player_form": "FPL Form",
+    "cost": "Price",
+    "ownership": "Ownership %",
+    "chance_of_playing": "Chance of Playing",
+    "transfers_in_event": "Transfers In (GW)",
+    "net_transfers": "Net Transfers",
+    "transfer_momentum": "Transfer Momentum",
+    # Rest / congestion
+    "days_rest": "Days Rest",
+    "fixture_congestion": "Fixture Congestion",
+    # Upside / volatility
+    "xg_volatility_last5": "xG Volatility (5-GW)",
+    "form_acceleration": "Form Acceleration",
+    "big_chance_frequency_last5": "Big Chance Frequency (5-GW)",
+    # Venue form
+    "home_xg_form": "Home xG Form",
+    "away_xg_form": "Away xG Form",
+    # Opponent history
+    "vs_opponent_goals_avg": "Goals vs This Opponent (avg)",
+    "vs_opponent_xg_avg": "xG vs This Opponent (avg)",
+    "vs_opponent_matches": "Matches vs This Opponent",
+    # Other
+    "set_piece_involvement": "Set Piece Involvement",
+    "season_progress": "Season Progress",
+    "availability_rate_last5": "Availability Rate (5-GW)",
+}
