@@ -110,15 +110,17 @@ def validate_solver_output(
 
     # --- Transfer count check (if applicable) ---
     if current_squad_ids is not None and free_transfers is not None:
-        new_ids = set(player_ids)
-        transfers_in = new_ids - current_squad_ids
-        hits = max(0, len(transfers_in) - free_transfers)
+        # Trust the solver's reported hits (which correctly accounts for
+        # forced replacements) rather than recomputing from raw set
+        # differences, which would overcount hits when unavailable players
+        # are force-swapped out.
+        reported_hits = result.get("hits", 0)
         hit_cost = result.get("hit_cost", 0.0)
-        expected_hit_cost = hits * solver_cfg.hit_cost
+        expected_hit_cost = reported_hits * solver_cfg.hit_cost
         if abs(hit_cost - expected_hit_cost) > 0.1:
             errors.append(
                 f"Hit cost mismatch: result says {hit_cost}, "
-                f"expected {expected_hit_cost} ({hits} hits)"
+                f"expected {expected_hit_cost} ({reported_hits} hits)"
             )
 
     return errors

@@ -357,12 +357,12 @@ def generate_predictions(
         result["captain_score"] = result["predicted_next_gw_points"]
 
     # --- Availability adjustments: zero predictions for unavailable players ---
+    unavailable_ids: set[int] = set()
     if data is not None:
         bootstrap_elements = (
             data.get("api", {}).get("bootstrap", {}).get("elements", [])
         )
         if bootstrap_elements:
-            unavailable_ids: set[int] = set()
             for el in bootstrap_elements:
                 status = el.get("status", "a")
                 chance = el.get("chance_of_playing_next_round")
@@ -399,6 +399,13 @@ def generate_predictions(
                 log.info("3-GW predictions merged for %d players", len(pred_3gw))
         except Exception:
             log.warning("Could not generate 3-GW predictions", exc_info=True)
+
+    # --- Re-zero 3-GW predictions for unavailable players (C4 fix) ---
+    # The availability zeroing above runs before the 3-GW merge, so
+    # predicted_next_3gw_points can be non-zero for injured players.
+    if unavailable_ids and "predicted_next_3gw_points" in result.columns:
+        mask_3gw = result["player_id"].isin(unavailable_ids)
+        result.loc[mask_3gw, "predicted_next_3gw_points"] = 0.0
 
     return {
         "players": result,

@@ -44,6 +44,7 @@ def track_prices(
         if el["id"] in track_ids:
             tid = el.get("team")
             players.append({
+                "season_id": season_id,
                 "player_id": el["id"],
                 "web_name": el.get("web_name"),
                 "team_code": id_to_code.get(tid),

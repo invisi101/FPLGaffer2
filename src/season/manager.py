@@ -189,9 +189,10 @@ class SeasonManager:
         team_name = entry.get("name", "")
         current_event = entry.get("current_event")
 
+        # H5 fix: Pre-season — generate pre-season plan instead of returning error
         if not current_event:
-            log("Season not started yet.")
-            return {"error": "Season not started yet."}
+            log("Season not started yet — switching to pre-season mode.")
+            return self.generate_preseason_plan(mid, progress_fn=progress_fn)
 
         log(f"Manager: {manager_name} ({team_name})")
         log(f"Current GW: {current_event}")
@@ -514,7 +515,11 @@ class SeasonManager:
             except Exception:
                 pass
 
-        track_ids = squad_ids
+        # H4 fix: Include watchlist players alongside squad
+        watchlist = self.watchlist.get_watchlist(season_id)
+        watchlist_ids = {w["player_id"] for w in watchlist}
+        track_ids = squad_ids | watchlist_ids
+
         players = []
         for el in elements:
             if el["id"] in track_ids:
@@ -559,8 +564,12 @@ class SeasonManager:
         pred_lookup: dict,
         chip_suggestion: str | None,
         players_df: pd.DataFrame | None = None,
-    ) -> None:
-        """Run the full multi-GW strategy pipeline and save results."""
+    ) -> dict | None:
+        """Run the full multi-GW strategy pipeline and save results.
+
+        Returns the strategic_plan dict (or None on failure) so that
+        ``generate_recommendation`` can extract GW+1 transfers from it.
+        """
         from src.features.builder import get_fixture_context
         from src.ml.multi_gw import predict_multi_gw
         from src.strategy.reactive import apply_availability_adjustments
@@ -683,12 +692,24 @@ class SeasonManager:
         # --- Step 7: Get price alerts ---
         price_alerts = self.get_price_alerts(season_id)
 
+        # --- H1 fix: Build chip plan from heatmap for transfer planner ---
+        chip_plan_for_planner = None
+        if chip_heatmap:
+            synthesizer_pre = PlanSynthesizer()
+            chip_schedule_pre = synthesizer_pre._plan_chip_schedule(
+                chip_heatmap, chip_synergies, available_chips,
+            )
+            # Invert chip_schedule from {chip: gw} to {gw: chip}
+            chip_gws_by_gw = {gw: chip for chip, gw in chip_schedule_pre.items()}
+            chip_plan_for_planner = {"chip_gws": chip_gws_by_gw}
+
         # --- Step 8: Run MultiWeekPlanner ---
         log("Planning transfers over 5 GWs...")
         planner = MultiWeekPlanner()
         transfer_plan = planner.plan_transfers(
             current_squad_ids, total_budget, free_transfers,
             future_predictions, fixture_calendar, price_alerts,
+            chip_plan=chip_plan_for_planner,
         )
 
         # --- Step 9: Run CaptainPlanner ---
@@ -728,6 +749,15 @@ class SeasonManager:
             for k, vals in chip_heatmap.items()
         }
 
+        # H2 fix: Compare old vs new plans and log specific changes
+        old_plan_row = self.plans.get_strategic_plan(season_id)
+        old_plan = None
+        if old_plan_row and old_plan_row.get("plan_json"):
+            try:
+                old_plan = json.loads(old_plan_row["plan_json"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         self.plans.save_strategic_plan(
             season_id=season_id,
             as_of_gw=next_gw,
@@ -735,17 +765,60 @@ class SeasonManager:
             chip_heatmap_json=json.dumps(heatmap_serialisable),
         )
 
-        # Log plan changes if previous plan exists
-        old_plan = self.plans.get_strategic_plan(season_id, as_of_gw=next_gw - 1)
-        if old_plan and old_plan.get("plan_json"):
-            self.plans.save_plan_change(
-                season_id, next_gw, "regenerated",
-                f"Strategic plan regenerated for GW{next_gw}",
-            )
+        # Log detailed plan changes if previous plan exists
+        if old_plan:
+            self._log_plan_changes(season_id, old_plan, strategic_plan, next_gw)
 
         n_timeline = len(strategic_plan.get("timeline", []))
         n_chips = len(chip_schedule)
         log(f"Strategy pipeline complete: {n_timeline} GW timeline, {n_chips} chips scheduled.")
+
+        return strategic_plan
+
+    def _log_plan_changes(
+        self,
+        season_id: int,
+        old_plan: dict,
+        new_plan: dict,
+        next_gw: int,
+    ) -> None:
+        """Compare old and new strategic plans and log specific differences.
+
+        Detects chip reschedules and captain changes, mirroring v1 behaviour.
+        """
+        old_schedule = old_plan.get("chip_schedule", {})
+        new_schedule = new_plan.get("chip_schedule", {})
+
+        for chip in set(list(old_schedule.keys()) + list(new_schedule.keys())):
+            old_gw = old_schedule.get(chip)
+            new_gw = new_schedule.get(chip)
+            if old_gw != new_gw:
+                self.plans.save_plan_change(
+                    season_id=season_id,
+                    gameweek=next_gw,
+                    change_type="chip_schedule",
+                    description=f"{chip} rescheduled",
+                    old_value=f"GW{old_gw}" if old_gw else "unscheduled",
+                    new_value=f"GW{new_gw}" if new_gw else "unscheduled",
+                    reason="Updated predictions/fixtures",
+                )
+
+        # Compare captain plan
+        old_timeline = old_plan.get("timeline", [])
+        new_timeline = new_plan.get("timeline", [])
+        old_caps = {e["gw"]: e.get("captain_name") for e in old_timeline if "captain_name" in e}
+        new_caps = {e["gw"]: e.get("captain_name") for e in new_timeline if "captain_name" in e}
+        for gw in set(list(old_caps.keys()) + list(new_caps.keys())):
+            if old_caps.get(gw) != new_caps.get(gw) and old_caps.get(gw) and new_caps.get(gw):
+                self.plans.save_plan_change(
+                    season_id=season_id,
+                    gameweek=next_gw,
+                    change_type="captain",
+                    description=f"GW{gw} captain changed",
+                    old_value=old_caps.get(gw, ""),
+                    new_value=new_caps.get(gw, ""),
+                    reason="Updated predictions",
+                )
 
     def _save_fallback_strategic_plan(
         self,
@@ -835,6 +908,127 @@ class SeasonManager:
         )
 
     # -------------------------------------------------------------------
+    # Bank vs Use Analysis
+    # -------------------------------------------------------------------
+
+    def _analyze_bank_vs_use(
+        self,
+        players_df: pd.DataFrame,
+        current_squad_ids: set[int],
+        total_budget: float,
+        free_transfers: int,
+        code_to_short: dict,
+    ) -> dict:
+        """Multi-week lookahead: compare FT allocation strategies over 2 weeks.
+
+        For each option (use 0, 1, 2... FTs this week), simulates:
+          Week 1: solve with N transfers -> squad + points
+          Week 2: solve with rolled-over FTs from new squad -> points
+        Picks the strategy that maximizes total points over both weeks.
+        """
+        from src.solver.transfers import solve_transfer_milp
+
+        gw_col = "predicted_next_gw_points"
+        if gw_col not in players_df.columns:
+            return {"recommendation": "insufficient_data"}
+
+        pool = players_df.dropna(subset=["position", "cost", gw_col]).copy()
+        if "team_code" in pool.columns:
+            pool["team"] = pool["team_code"].map(code_to_short).fillna("")
+
+        # Current XI points (week 1 baseline with 0 transfers)
+        current_pred = pool[pool["player_id"].isin(current_squad_ids)]
+        current_xi_pts = (
+            current_pred.nlargest(min(11, len(current_pred)), gw_col)[gw_col].sum()
+            if not current_pred.empty
+            else 0
+        )
+        # Add captain bonus to baseline for fair comparison
+        if not current_pred.empty and len(current_pred) >= 1:
+            cap_score_col = "captain_score" if "captain_score" in current_pred.columns else gw_col
+            top11 = current_pred.nlargest(min(11, len(current_pred)), gw_col)
+            if not top11.empty:
+                best_cap_idx = top11[cap_score_col].idxmax()
+                current_xi_pts += top11.loc[best_cap_idx, gw_col]
+
+        # Simulate each strategy: use 0..min(ft, 3) FTs this week
+        max_use = min(free_transfers, 3)
+        strategies = []
+
+        cap_col = "captain_score" if "captain_score" in pool.columns else None
+
+        for use_now in range(0, max_use + 1):
+            # Week 1: solve with use_now transfers
+            if use_now == 0:
+                week1_pts = current_xi_pts
+                week1_squad_ids = current_squad_ids
+                week1_budget = total_budget
+            else:
+                result_w1 = solve_transfer_milp(
+                    pool, current_squad_ids, gw_col,
+                    budget=total_budget, max_transfers=use_now,
+                    captain_col=cap_col,
+                )
+                if result_w1:
+                    week1_pts = result_w1["starting_points"]
+                    week1_squad_ids = {p["player_id"] for p in result_w1["players"]}
+                    week1_budget = total_budget
+                else:
+                    week1_pts = current_xi_pts
+                    week1_squad_ids = current_squad_ids
+                    week1_budget = total_budget
+
+            # FTs available next week: unused FTs roll over + 1 new, capped at 5
+            remaining = free_transfers - use_now
+            next_week_fts = min(remaining + 1, 5)
+
+            # Week 2: solve from week 1's squad with next_week_fts transfers
+            result_w2 = solve_transfer_milp(
+                pool, week1_squad_ids, gw_col,
+                budget=week1_budget, max_transfers=next_week_fts,
+                captain_col=cap_col,
+            )
+            week2_pts = result_w2["starting_points"] if result_w2 else 0
+
+            total_pts = round(week1_pts + week2_pts, 2)
+
+            strategies.append({
+                "use_this_week": use_now,
+                "fts_next_week": next_week_fts,
+                "week1_points": round(week1_pts, 2),
+                "week2_points": round(week2_pts, 2),
+                "total_2week": total_pts,
+            })
+
+        # Pick best strategy
+        best = max(strategies, key=lambda s: s["total_2week"])
+        best_use = best["use_this_week"]
+
+        # Determine recommendation
+        if best_use == 0:
+            rec = "bank"
+        else:
+            rec = f"use_{best_use}"
+
+        # Build comparison summary
+        bank_strat = next((s for s in strategies if s["use_this_week"] == 0), None)
+        use1_strat = next((s for s in strategies if s["use_this_week"] == 1), None)
+
+        return {
+            "recommendation": rec,
+            "best_strategy": best,
+            "strategies": strategies,
+            "free_transfers": free_transfers,
+            "horizon": "2 weeks",
+            "gain_from_transfer": round(
+                (use1_strat["total_2week"] - bank_strat["total_2week"])
+                if use1_strat and bank_strat
+                else 0,
+                2,
+            ),
+        }
+
+    # -------------------------------------------------------------------
     # Public Facade Methods (used by API blueprints)
     # -------------------------------------------------------------------
 
@@ -894,8 +1088,9 @@ class SeasonManager:
     ) -> dict:
         """Generate strategic plan + transfer recommendation for next GW.
 
-        Orchestrates: data refresh → predictions → chip heatmap →
-        transfer plan → captain plan → plan synthesis → DB store.
+        Orchestrates: data refresh -> predictions -> strategic pipeline ->
+        extract GW+1 from plan -> DB store.  Falls back to single-GW MILP
+        if the pipeline fails.
         """
 
         def log(msg: str) -> None:
@@ -965,7 +1160,13 @@ class SeasonManager:
             el = elements_map.get(eid, {})
             current_squad_cost += el.get("now_cost", 0) / 10
 
-        total_budget = round(bank + current_squad_cost, 1)
+        # C1 fix: Use entry_history "value" (includes 50% price-rise rule)
+        # when available, fall back to sum(now_cost) + bank (slightly optimistic).
+        api_value = entry_history.get("value")
+        if api_value:
+            total_budget = round(api_value / 10, 1)
+        else:
+            total_budget = round(bank + current_squad_cost, 1)
 
         # Build opponent map: team_code -> "OPP(H/A)" for next GW
         fixtures_list = self._load_fixtures()
@@ -980,12 +1181,6 @@ class SeasonManager:
                     opponent_map[h_code] = f"{a_short}(H)"
                 if a_code is not None:
                     opponent_map[a_code] = f"{h_short}(A)"
-
-        # 3) Run transfer solver
-        log("Solving transfers...")
-        from src.solver.transfers import solve_transfer_milp_with_hits
-
-        target = "predicted_next_gw_points"
 
         # Normalise position and enrich with cost/team_code from bootstrap
         if "position_clean" in players_df.columns and "position" not in players_df.columns:
@@ -1002,30 +1197,7 @@ class SeasonManager:
                 if pd.isna(row.get("team_code")) or row.get("team_code") is None:
                     players_df.at[idx, "team_code"] = id_to_code.get(el.get("team"))
 
-        pool = players_df.dropna(subset=["position", "cost", target]).copy()
-        captain_col = "captain_score" if "captain_score" in pool.columns else None
-
-        transfer_result = solve_transfer_milp_with_hits(
-            pool,
-            current_squad_ids,
-            target,
-            budget=total_budget,
-            free_transfers=free_transfers,
-            max_transfers=4,
-            captain_col=captain_col,
-        )
-
-        # 4) Build recommendation
-        transfers_json = "[]"
-        captain_id = None
-        captain_name = None
-        chip_suggestion = None
-        predicted_points = 0.0
-        base_points = 0.0
-        current_xi_points = 0.0
-        new_squad_json = None
-        chip_values_json = "{}"
-        bank_analysis_json = "{}"
+        target = "predicted_next_gw_points"
 
         # Build a lookup for prediction data by player_id
         pred_lookup: dict[int, dict] = {}
@@ -1043,90 +1215,234 @@ class SeasonManager:
                         "captain_score": round(float(prow.get("captain_score") or 0), 2),
                     }
 
-        if transfer_result:
-            log("Building recommendation...")
+        # 3) Initialise recommendation defaults
+        transfers_json = "[]"
+        captain_id = None
+        captain_name = None
+        chip_suggestion = None
+        predicted_points = 0.0
+        base_points = 0.0
+        current_xi_points = 0.0
+        new_squad_json = None
+        chip_values_json = "{}"
+        bank_analysis_json = "{}"
+        transfer_result = None
 
-            def _enrich_player(pid: int) -> dict:
-                """Build a rich player dict from bootstrap + predictions."""
-                el = elements_map.get(pid, {})
-                tc = id_to_code.get(el.get("team"))
-                preds = pred_lookup.get(pid, {})
-                return {
-                    "player_id": pid,
-                    "web_name": el.get("web_name", "Unknown"),
-                    "position": ELEMENT_TYPE_MAP.get(el.get("element_type"), ""),
-                    "team_code": tc,
-                    "team": code_to_short.get(tc, ""),
-                    "cost": round(el.get("now_cost", 0) / 10, 1),
-                    "total_points": el.get("total_points", 0),
-                    "event_points": el.get("event_points", 0),
-                    "predicted_next_gw_points": preds.get("predicted_next_gw_points", 0),
-                    "predicted_next_3gw_points": preds.get("predicted_next_3gw_points"),
-                    "captain_score": preds.get("captain_score", 0),
-                    "opponent": opponent_map.get(tc, ""),
-                }
+        # C2 fix: Run strategy pipeline FIRST and extract GW+1 from it.
+        # Only fall back to single-GW solver if pipeline fails.
+        strategic_plan = None
+        try:
+            strategic_plan = self._run_strategy_pipeline(
+                log, season_id, next_gw, data, df, result,
+                bootstrap, elements_map, id_to_code, code_to_short,
+                current_squad_ids, total_budget, free_transfers,
+                history, captain_id, captain_name,
+                predicted_points, current_xi_points,
+                transfer_result, pred_lookup, chip_suggestion,
+                players_df,
+            )
+        except Exception as exc:
+            logger.warning("Strategy pipeline failed: %s", exc)
+            strategic_plan = None
 
-            # Build transfer list
-            transfers = []
-            out_ids = list(transfer_result.get("transfers_out_ids", set()))
-            in_ids = list(transfer_result.get("transfers_in_ids", set()))
-            max_len = max(len(out_ids), len(in_ids))
-            for i in range(max_len):
-                out_entry = _enrich_player(out_ids[i]) if i < len(out_ids) else {}
-                in_entry = _enrich_player(in_ids[i]) if i < len(in_ids) else {}
-                transfers.append({"out": out_entry, "in": in_entry})
+        # Try to extract GW+1 transfers from the strategic plan timeline
+        used_pipeline = False
+        if strategic_plan and strategic_plan.get("timeline"):
+            timeline = strategic_plan["timeline"]
+            gw1_entry = next(
+                (e for e in timeline if e.get("gw") == next_gw), None
+            )
+            if gw1_entry is None and timeline:
+                gw1_entry = timeline[0]
 
-            transfers_json = json.dumps(transfers)
-            captain_id = transfer_result.get("captain_id")
-            if captain_id:
-                el = elements_map.get(captain_id, {})
-                captain_name = el.get("web_name", "Unknown")
+            if gw1_entry:
+                used_pipeline = True
+                predicted_points = gw1_entry.get("predicted_points", 0)
 
-            # Points: baseline (no changes) vs after transfers
-            current_xi_points = transfer_result.get("baseline_points", 0)
-            base_points = transfer_result.get("starting_points", 0)
-            predicted_points = transfer_result.get("starting_points", 0)
+                # Extract captain from timeline
+                captain_name = gw1_entry.get("captain_name")
+                captain_id_from_plan = gw1_entry.get("captain_id")
+                if captain_id_from_plan:
+                    captain_id = captain_id_from_plan
+                    if not captain_name:
+                        el = elements_map.get(captain_id, {})
+                        captain_name = el.get("web_name", "Unknown")
 
-            # Enrich new_squad with full player data for pitch rendering
-            enriched_squad = []
-            for p in transfer_result.get("players", []):
-                pid = int(p.get("player_id", 0))
-                el = elements_map.get(pid, {})
-                tc = p.get("team_code") or id_to_code.get(el.get("team"))
-                preds = pred_lookup.get(pid, {})
-                enriched_squad.append({
-                    "player_id": pid,
-                    "web_name": el.get("web_name", str(p.get("web_name", "Unknown"))),
-                    "position": p.get("position", ELEMENT_TYPE_MAP.get(el.get("element_type"), "")),
-                    "team_code": tc,
-                    "team": code_to_short.get(tc, ""),
-                    "cost": round(float(p.get("cost", el.get("now_cost", 0) / 10)), 1),
-                    "predicted_next_gw_points": preds.get(
-                        "predicted_next_gw_points",
-                        round(float(p.get("predicted_next_gw_points", 0)), 2),
-                    ),
-                    "predicted_next_3gw_points": preds.get("predicted_next_3gw_points"),
-                    "captain_score": preds.get(
-                        "captain_score",
-                        round(float(p.get("captain_score", 0)), 2),
-                    ),
-                    "total_points": el.get("total_points", 0),
-                    "event_points": el.get("event_points", 0),
-                    "starter": bool(p.get("starter", False)),
-                    "is_captain": pid == captain_id if captain_id else False,
-                    "is_vice_captain": False,
-                    "opponent": opponent_map.get(tc, ""),
-                })
-            # Set vice captain (highest captain_score starter after captain)
-            vc_candidates = [
-                p for p in enriched_squad if p["starter"] and not p["is_captain"]
-            ]
-            if vc_candidates:
-                vc_candidates.sort(
-                    key=lambda p: p.get("captain_score", 0), reverse=True
+                # Extract chip from plan chip_schedule
+                chip_schedule = strategic_plan.get("chip_schedule", {})
+                for cn, cg in chip_schedule.items():
+                    if cg == next_gw:
+                        chip_suggestion = cn
+                        break
+
+                # Build transfer pairs from pipeline
+                transfers = []
+                def _enrich_player(pid: int) -> dict:
+                    """Build a rich player dict from bootstrap + predictions."""
+                    el = elements_map.get(pid, {})
+                    tc = id_to_code.get(el.get("team"))
+                    preds = pred_lookup.get(pid, {})
+                    return {
+                        "player_id": pid,
+                        "web_name": el.get("web_name", "Unknown"),
+                        "position": ELEMENT_TYPE_MAP.get(el.get("element_type"), ""),
+                        "team_code": tc,
+                        "team": code_to_short.get(tc, ""),
+                        "cost": round(el.get("now_cost", 0) / 10, 1),
+                        "total_points": el.get("total_points", 0),
+                        "event_points": el.get("event_points", 0),
+                        "predicted_next_gw_points": preds.get("predicted_next_gw_points", 0),
+                        "predicted_next_3gw_points": preds.get("predicted_next_3gw_points"),
+                        "captain_score": preds.get("captain_score", 0),
+                        "opponent": opponent_map.get(tc, ""),
+                    }
+
+                t_in_list = gw1_entry.get("transfers_in", [])
+                t_out_list = gw1_entry.get("transfers_out", [])
+                max_len = max(len(t_out_list), len(t_in_list))
+                for i in range(max_len):
+                    out_entry = _enrich_player(t_out_list[i].get("player_id")) if i < len(t_out_list) else {}
+                    in_entry = _enrich_player(t_in_list[i].get("player_id")) if i < len(t_in_list) else {}
+                    transfers.append({"out": out_entry, "in": in_entry})
+
+                transfers_json = json.dumps(transfers)
+
+                # Build new squad from pipeline if available
+                if gw1_entry.get("new_squad"):
+                    new_squad_json = json.dumps(gw1_entry["new_squad"])
+                elif gw1_entry.get("squad_ids"):
+                    # Build enriched squad from squad_ids
+                    enriched_squad = []
+                    squad_ids_plan = set(gw1_entry["squad_ids"])
+                    for pid in squad_ids_plan:
+                        enriched_squad.append(_enrich_player(pid))
+                    new_squad_json = json.dumps(enriched_squad)
+
+        # Fall back to single-GW solver if pipeline didn't produce GW+1 data
+        if not used_pipeline:
+            log("Running single-GW transfer solver (fallback)...")
+            from src.solver.transfers import solve_transfer_milp_with_hits
+
+            pool = players_df.dropna(subset=["position", "cost", target]).copy()
+            captain_col = "captain_score" if "captain_score" in pool.columns else None
+
+            transfer_result = solve_transfer_milp_with_hits(
+                pool,
+                current_squad_ids,
+                target,
+                budget=total_budget,
+                free_transfers=free_transfers,
+                max_transfers=4,
+                captain_col=captain_col,
+            )
+
+            if transfer_result:
+                log("Building recommendation...")
+
+                def _enrich_player_fb(pid: int) -> dict:
+                    """Build a rich player dict from bootstrap + predictions."""
+                    el = elements_map.get(pid, {})
+                    tc = id_to_code.get(el.get("team"))
+                    preds = pred_lookup.get(pid, {})
+                    return {
+                        "player_id": pid,
+                        "web_name": el.get("web_name", "Unknown"),
+                        "position": ELEMENT_TYPE_MAP.get(el.get("element_type"), ""),
+                        "team_code": tc,
+                        "team": code_to_short.get(tc, ""),
+                        "cost": round(el.get("now_cost", 0) / 10, 1),
+                        "total_points": el.get("total_points", 0),
+                        "event_points": el.get("event_points", 0),
+                        "predicted_next_gw_points": preds.get("predicted_next_gw_points", 0),
+                        "predicted_next_3gw_points": preds.get("predicted_next_3gw_points"),
+                        "captain_score": preds.get("captain_score", 0),
+                        "opponent": opponent_map.get(tc, ""),
+                    }
+
+                # Build transfer list
+                transfers = []
+                out_ids = list(transfer_result.get("transfers_out_ids", set()))
+                in_ids = list(transfer_result.get("transfers_in_ids", set()))
+                max_len = max(len(out_ids), len(in_ids))
+                for i in range(max_len):
+                    out_entry = _enrich_player_fb(out_ids[i]) if i < len(out_ids) else {}
+                    in_entry = _enrich_player_fb(in_ids[i]) if i < len(in_ids) else {}
+                    transfers.append({"out": out_entry, "in": in_entry})
+
+                transfers_json = json.dumps(transfers)
+                captain_id = transfer_result.get("captain_id")
+                if captain_id:
+                    el = elements_map.get(captain_id, {})
+                    captain_name = el.get("web_name", "Unknown")
+
+                # Points: baseline (no changes) vs after transfers
+                current_xi_points = transfer_result.get("baseline_points", 0)
+                base_points = transfer_result.get("starting_points", 0)
+                predicted_points = transfer_result.get("starting_points", 0)
+
+                # Enrich new_squad with full player data for pitch rendering
+                enriched_squad = []
+                for p in transfer_result.get("players", []):
+                    pid = int(p.get("player_id", 0))
+                    el = elements_map.get(pid, {})
+                    tc = p.get("team_code") or id_to_code.get(el.get("team"))
+                    preds = pred_lookup.get(pid, {})
+                    enriched_squad.append({
+                        "player_id": pid,
+                        "web_name": el.get("web_name", str(p.get("web_name", "Unknown"))),
+                        "position": p.get("position", ELEMENT_TYPE_MAP.get(el.get("element_type"), "")),
+                        "team_code": tc,
+                        "team": code_to_short.get(tc, ""),
+                        "cost": round(float(p.get("cost", el.get("now_cost", 0) / 10)), 1),
+                        "predicted_next_gw_points": preds.get(
+                            "predicted_next_gw_points",
+                            round(float(p.get("predicted_next_gw_points", 0)), 2),
+                        ),
+                        "predicted_next_3gw_points": preds.get("predicted_next_3gw_points"),
+                        "captain_score": preds.get(
+                            "captain_score",
+                            round(float(p.get("captain_score", 0)), 2),
+                        ),
+                        "total_points": el.get("total_points", 0),
+                        "event_points": el.get("event_points", 0),
+                        "starter": bool(p.get("starter", False)),
+                        "is_captain": pid == captain_id if captain_id else False,
+                        "is_vice_captain": False,
+                        "opponent": opponent_map.get(tc, ""),
+                    })
+                # Set vice captain (highest captain_score starter after captain)
+                vc_candidates = [
+                    p for p in enriched_squad if p["starter"] and not p["is_captain"]
+                ]
+                if vc_candidates:
+                    vc_candidates.sort(
+                        key=lambda p: p.get("captain_score", 0), reverse=True
+                    )
+                    vc_candidates[0]["is_vice_captain"] = True
+                new_squad_json = json.dumps(enriched_squad)
+
+            # Save fallback strategic plan if pipeline didn't run
+            if not strategic_plan:
+                self._save_fallback_strategic_plan(
+                    log, season_id, next_gw,
+                    elements_map, id_to_code, pred_lookup,
+                    current_squad_ids, free_transfers,
+                    captain_id, captain_name,
+                    predicted_points, current_xi_points,
+                    transfer_result, chip_suggestion,
                 )
-                vc_candidates[0]["is_vice_captain"] = True
-            new_squad_json = json.dumps(enriched_squad)
+
+        # H3 fix: Run bank vs use analysis
+        log("Running bank vs use analysis...")
+        try:
+            bank_analysis = self._analyze_bank_vs_use(
+                players_df, current_squad_ids, total_budget, free_transfers,
+                code_to_short,
+            )
+            bank_analysis_json = json.dumps(bank_analysis)
+        except Exception as exc:
+            logger.warning("Bank analysis failed: %s", exc)
+            bank_analysis_json = "{}"
 
         # 5) Store recommendation
         log("Saving recommendation...")
@@ -1146,29 +1462,6 @@ class SeasonManager:
             free_transfers=free_transfers,
         )
 
-        # 5b) Full strategy pipeline (multi-GW predictions, chip eval,
-        #     transfer planner, captain planner, plan synthesis)
-        try:
-            self._run_strategy_pipeline(
-                log, season_id, next_gw, data, df, result,
-                bootstrap, elements_map, id_to_code, code_to_short,
-                current_squad_ids, total_budget, free_transfers,
-                history, captain_id, captain_name,
-                predicted_points, current_xi_points,
-                transfer_result, pred_lookup, chip_suggestion,
-                players_df,
-            )
-        except Exception as exc:
-            logger.warning("Strategy pipeline failed, using single-GW fallback: %s", exc)
-            self._save_fallback_strategic_plan(
-                log, season_id, next_gw,
-                elements_map, id_to_code, pred_lookup,
-                current_squad_ids, free_transfers,
-                captain_id, captain_name,
-                predicted_points, current_xi_points,
-                transfer_result, chip_suggestion,
-            )
-
         # 6) Update fixture calendar
         log("Updating fixtures...")
         from src.season.fixtures import save_fixture_calendar
@@ -1187,7 +1480,7 @@ class SeasonManager:
             "gameweek": next_gw,
             "predicted_points": predicted_points,
             "captain": captain_name,
-            "n_transfers": len(transfer_result.get("transfers_in_ids", set())) if transfer_result else 0,
+            "n_transfers": len(json.loads(transfers_json)) if transfers_json != "[]" else 0,
         }
 
     def get_action_plan(self, manager_id: int) -> dict:
@@ -1197,11 +1490,26 @@ class SeasonManager:
             return {"error": "No active season."}
         season_id = season["id"]
 
-        recs = self.recommendations.get_recommendations(season_id)
-        if not recs:
-            return {"error": "No recommendations yet. Generate one first."}
+        # M2 fix: Look up recommendation by actual next_gw, not recs[-1]
+        try:
+            bootstrap = self._load_bootstrap()
+            next_gw = self._get_next_gw(bootstrap)
+        except Exception:
+            bootstrap = None
+            next_gw = None
 
-        latest = recs[-1]
+        if next_gw:
+            latest = self.recommendations.get_recommendation(season_id, next_gw)
+        else:
+            latest = None
+
+        # Fall back to most recent recommendation if next_gw lookup fails
+        if not latest:
+            recs = self.recommendations.get_recommendations(season_id)
+            if not recs:
+                return {"error": "No recommendations yet. Generate one first."}
+            latest = recs[-1]
+
         gw = latest.get("gameweek")
 
         transfers = []
@@ -1213,7 +1521,8 @@ class SeasonManager:
         # Get GW deadline from bootstrap
         deadline = None
         try:
-            bootstrap = self._load_bootstrap()
+            if bootstrap is None:
+                bootstrap = self._load_bootstrap()
             for ev in bootstrap.get("events", []):
                 if ev.get("id") == gw:
                     deadline = ev.get("deadline_time")

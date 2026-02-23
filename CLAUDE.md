@@ -89,8 +89,7 @@ src/
 │   ├── registry.py          # Position-specific feature lists, sub-model features
 │   ├── player_rolling.py    # Rolling stats (3/5 GW windows)
 │   ├── team_stats.py        # Team-level rolling stats
-│   ├── playerstats.py       # Per-90 stats, element history
-│   ├── element_history.py   # FPL element summary features
+│   ├── playerstats.py       # Per-90 stats, bootstrap features (form, COP, cost)
 │   ├── fixture_context.py   # FDR, opponent elo, is_home, fixture count
 │   ├── opponent_history.py  # Historical performance vs specific opponents
 │   ├── interactions.py      # Cross-feature interactions (xG x opp_gc)
@@ -164,7 +163,7 @@ tests/      # Integration tests (17 tests)
 `load_all_data()` fetches from both sources and returns a unified dict with keys: `player_match_stats`, `player_stats`, `match_stats`, `api` (bootstrap, fixtures).
 
 ### Feature Engineering (`src/features/`)
-100+ features per player per GW, built by `build_features()` which orchestrates 10 feature modules:
+100+ features per player per GW, built by `build_features()` which orchestrates 9 feature modules:
 - **Player rolling** (3/5 GW windows): xG, xA, xGOT, shots, touches, dribbles, crosses, tackles, goals, assists
 - **EWM features** (span=5): Exponentially weighted xG, xA, xGOT
 - **Upside/volatility**: xG volatility, form acceleration, big chance frequency
@@ -232,10 +231,11 @@ Import as singletons: `from src.config import xgb, ensemble, solver_cfg, ...`
 - Production predictions use an **85/15 blend** of mean regression and decomposed sub-models
 - Mean model drives prediction accuracy; decomposed weight preserves ranking signal in the bench/rotation zone
 
-### Multi-GW Predictions
-- 3-GW: Sum of three 1-GW predictions with correct opponent data per offset, 0.95 decay per GW
-- 8-GW horizon: Model predictions for near-term, fixture heuristics for distant GWs
-- Confidence decays with distance (0.95 -> 0.77 at GW+5)
+### Multi-GW Predictions (`src/ml/multi_gw.py`)
+- 3-GW: Sum of three 1-GW predictions with correct opponent data per offset
+- 8-GW horizon: Model predictions via `predict_multi_gw()` for up to 8 future GWs
+- Confidence decay is configurable via `PredictionConfig.confidence_decay` tuple in `config.py`: `(0.95, 0.93, 0.90, 0.87, 0.83, 0.80, 0.77)`. Falls back to `0.95^(offset-1)` beyond the tuple length.
+- `_build_offset_snapshot()` builds a per-GW snapshot by swapping fixture/opponent columns for each future GW, recomputing interaction features (xg_x_opp_goals_conceded, cs_opportunity, venue_matched_form) and multi-GW lookahead features (avg_fdr_next3, home_pct_next3, avg_opponent_elo_next3)
 
 ### Prediction Intervals
 - Walk-forward residuals stored with each model (q10, q90 per prediction bin)
@@ -309,20 +309,45 @@ Orchestrates everything for a full season. Central class: `SeasonManager`.
 
 ### Weekly Workflow
 1. **Refresh Data** -> updates cache, detects availability issues, checks plan health
-2. **Generate Recommendation** -> predictions, transfer solver, action plan, strategic plan, stores in DB
+2. **Generate Recommendation** -> full strategy pipeline -> extract GW+1 -> DB store
 3. **Review Action Plan** -> clear steps (transfer X out / Y in, set captain to Z, activate chip)
 4. **Make Moves** -> user executes on FPL website
 5. **Record Results** -> imports actual picks, compares to recommendation, tracks accuracy
 
-### Key Methods
-- `init_season()` — Backfills season history from FPL API (fetches all GW picks, transfers, chips)
-- `generate_recommendation()` — Full pipeline: load data -> predict -> solver -> save recommendation + strategic plan
-- `get_action_plan()` — Builds human-readable action plan with steps ({action, description}), deadline, rationale
+### `generate_recommendation()` — The Critical Orchestration
+
+This is the most complex method. Understanding its flow is essential for debugging:
+
+1. **Load data + build features + generate predictions** (1-GW ensemble + 3-GW)
+2. **Fetch current squad** from FPL API (picks, history, entry_history)
+3. **Calculate budget** using `entry_history["value"]` (real selling value with 50% profit rule), NOT `sum(now_cost)` which is optimistically high
+4. **Run `_run_strategy_pipeline()` FIRST** — this is the primary path:
+   - Generate 8-GW multi-GW predictions
+   - Replace GW+1 predictions with the exact numbers from the Predictions tab (consistency)
+   - Enrich GW+2+ with bootstrap data (web_name, position, cost, team_code)
+   - Apply availability adjustments (zero injured players across all future GWs)
+   - Determine available chips (half-season boundary aware)
+   - Run ChipEvaluator -> chip heatmap + synergies
+   - Build `chip_plan` from heatmap and pass to MultiWeekPlanner
+   - Run MultiWeekPlanner -> 5-GW transfer plan with FT banking
+   - Run CaptainPlanner -> captaincy across horizon
+   - Run PlanSynthesizer -> unified timeline + rationale + chip schedule
+   - Save strategic plan + detect/log plan changes vs previous plan
+   - **Return** the strategic plan so GW+1 can be extracted
+5. **Extract GW+1** from the strategic plan timeline (transfers, captain, chip)
+6. **Fallback**: If pipeline fails, fall back to single-GW MILP solver (`solve_transfer_milp_with_hits`) and save a stub strategic plan
+7. **Run bank-vs-use analysis** (2-week FT allocation comparison)
+8. **Save recommendation** to DB
+
+### Other Key Methods
+- `init_season()` — Backfills season history from FPL API; pre-season calls `generate_preseason_plan()` instead of erroring
+- `get_action_plan()` — Looks up recommendation by next_gw (not just latest), builds human-readable steps
 - `record_actual_results()` — Post-GW import + comparison to recommendation
 - `get_dashboard()` — Aggregated dashboard data (rank, points, budget, accuracy)
+- `_log_plan_changes()` — Compares old vs new strategic plans, logs chip reschedules and captain changes to plan_changelog
 
 ### Price Tracking
-- `track_prices()`: Snapshots prices for squad players
+- `track_prices()`: Snapshots prices for squad players **AND watchlist players**
 - `get_price_alerts()`: Raw net-transfer threshold alerts
 - `predict_price_changes()`: Ownership-based algorithm approximation
 - `get_price_history()`: Historical snapshots with date/price/net_transfers
@@ -487,6 +512,84 @@ for ev in bootstrap.get("events", []):
 
 ---
 
+## Critical Invariants (Must Be Preserved)
+
+These patterns were identified through audit. Violating any of them causes real bugs.
+
+### 1. Availability Zeroing Must Cover ALL Prediction Columns
+
+In `ml/prediction.py`, injured/unavailable players are zeroed BEFORE the 3-GW merge. Since 3-GW predictions come from `multi_gw.py` (which doesn't know about availability), they must be re-zeroed AFTER the merge:
+
+```python
+# In generate_predictions():
+# First zeroing: covers predicted_next_gw_points, captain_score, intervals
+unavailable_ids: set[int] = set()
+# ... populate from bootstrap ...
+result.loc[mask, col] = 0.0  # For all pred cols
+
+# 3-GW merge happens here (can introduce non-zero values for injured players)
+result = result.merge(pred_3gw, on="player_id", how="left")
+
+# Second zeroing: MUST happen after 3-GW merge
+if unavailable_ids and "predicted_next_3gw_points" in result.columns:
+    mask_3gw = result["player_id"].isin(unavailable_ids)
+    result.loc[mask_3gw, "predicted_next_3gw_points"] = 0.0
+```
+
+**If you add ANY new prediction column that gets merged after the first zeroing, you MUST add a re-zeroing step.**
+
+### 2. Budget = Selling Value, Not Sum of now_cost
+
+FPL only gives you 50% of price rises when selling. The public API `now_cost` is the BUY price. Use `entry_history["value"]` from the picks endpoint for accurate budget:
+
+```python
+# In generate_recommendation():
+api_value = entry_history.get("value")
+if api_value:
+    total_budget = round(api_value / 10, 1)  # Correct: includes 50% rule
+else:
+    total_budget = round(bank + current_squad_cost, 1)  # Fallback: slightly optimistic
+```
+
+### 3. Strategy Pipeline First, Single-GW Solver as Fallback
+
+`generate_recommendation()` runs the full multi-GW strategy pipeline FIRST, then extracts GW+1 from the timeline. The single-GW MILP solver is ONLY the fallback when the pipeline fails. Do NOT reverse this — the pipeline produces better recommendations because it considers future GWs.
+
+### 4. Chip GW Solver Failures Must Have Fallbacks
+
+In `transfer_planner.py`, `_simulate_chip_gw()` can fail if the MILP solver finds no feasible solution. This must NOT abort the entire planning path — it falls back to the current squad's predicted points:
+
+```python
+# In _simulate_chip_gw():
+if result is None:
+    # Fall back to current squad points, don't return None
+    return current_squad_points
+```
+
+### 5. Confidence Decay Must Use Config
+
+Multi-GW predictions in `ml/multi_gw.py` use `PredictionConfig.confidence_decay` from `config.py`. The tuple `(0.95, 0.93, 0.90, ...)` is index-accessed by `offset - 1`, with fallback to `0.95^(offset-1)` for offsets beyond the tuple. Do NOT hardcode decay values.
+
+### 6. Validator Trusts Solver's Hit Count
+
+In `solver/validator.py`, hit cost validation uses `result.get("hits", 0)` from the solver, NOT recomputed from `current_squad_ids - new_squad_ids`. Recomputing overcounts because forced replacements (unavailable players) are not hits.
+
+### 7. pandas Copy-on-Write (CoW) Safety
+
+When modifying a column created via boolean operations on a DataFrame slice, you MUST `.copy()` the intermediate result to avoid pandas CoW warnings/bugs:
+
+```python
+# In playerstats.py:
+gw_mins = gw_mins.copy()  # Required before boolean assignment
+gw_mins["played"] = gw_mins["minutes_played"] > 0
+```
+
+### 8. price_tracker Must Include season_id
+
+`strategy/price_tracker.py` functions that return player dicts must include `"season_id": season_id` so the repository can correctly filter snapshots.
+
+---
+
 ## Testing
 
 ```bash
@@ -514,16 +617,16 @@ FLASK_APP=src.api .venv/bin/python -m flask run --port 9874
 ### Key test commands
 ```bash
 # Action plan
-curl -s "http://127.0.0.1:9874/api/season/action-plan?manager_id=1364335"
+curl -s "http://127.0.0.1:9874/api/season/action-plan?manager_id=12904702"
 
 # Strategic plan
-curl -s "http://127.0.0.1:9874/api/season/strategic-plan?manager_id=1364335"
+curl -s "http://127.0.0.1:9874/api/season/strategic-plan?manager_id=12904702"
 
 # Plan health
-curl -s "http://127.0.0.1:9874/api/season/plan-health?manager_id=1364335"
+curl -s "http://127.0.0.1:9874/api/season/plan-health?manager_id=12904702"
 
 # Dashboard
-curl -s "http://127.0.0.1:9874/api/season/dashboard?manager_id=1364335"
+curl -s "http://127.0.0.1:9874/api/season/dashboard?manager_id=12904702"
 ```
 
 ---
@@ -551,8 +654,7 @@ Key FPL rules that affect codebase logic:
 - **fixture_congestion includes predicted match's own rest**: Borderline design choice — fixture schedule is known in advance.
 - **FT planner explores at most 1 hit per GW**: Taking 2+ hits is almost never profitable.
 - **3-GW prediction is a simple sum**: No adjustment for form regression or rotation risk.
-- **Selling prices use `now_cost`**: Public API doesn't provide actual selling prices (50% profit sharing on price rises).
-- **Strategic plan is currently single-GW**: The full multi-GW planning pipeline (chip evaluator, transfer planner, captain planner, plan synthesizer) is implemented but not yet wired into `generate_recommendation()`. Current strategic plan shows only the next GW.
+- **Selling prices partially use `now_cost`**: Budget calculation uses `entry_history["value"]` (correct). However, the MILP solver still uses `now_cost` for individual player costs since the public API doesn't provide per-player selling prices (50% profit sharing on price rises). This means the solver may slightly overestimate available budget when selling players whose prices have risen.
 
 ---
 
@@ -580,31 +682,75 @@ All path references go through `src.paths` — no module should compute its own 
 
 ## Full Audit Prompt
 
-When the user says **"run full audit"**, execute the following comprehensive audit. Use parallel agents.
+When the user says **"run full audit"**, execute the following comprehensive audit. Use parallel agents to cover all areas simultaneously. Dispatch at least 4 agents covering: (1) Solver + FPL Rules, (2) Features + Data Leakage, (3) ML Pipeline + Predictions, (4) Strategy + Season + API.
+
+### Mindset
+
+You are an FPL manager who has entrusted this app with your entire season. Every recommendation must be correct. A single logic bug can cost hundreds of points. Audit as if your mini-league title depends on it.
 
 ### What to check
 
-**1. FPL Rule Compliance** — Trace each rule to the code that handles it.
+**1. FPL Rule Compliance** — Trace each rule to the code that handles it:
+- FT banking: +1 per GW, max 5, cost -4 per extra transfer (see `_calculate_free_transfers` in manager.py)
+- Chips: WC and FH preserve FTs (no reset, no accrual). BB/TC one-GW only. Half-season boundary at GW20.
+- Captain: doubles points. Vice-captain activates only if captain gets 0 minutes.
+- Squad: 15 players, 2/5/5/3, max 3 per team. Formation: 1 GKP, 3-5 DEF, 2-5 MID, 1-3 FWD.
 
-**2. Data Leakage** — Every feature must only use GW N-1 and earlier data when predicting GW N+1. Check `shift(1)` on all rolling calculations.
+**2. Data Leakage** — Every feature must only use GW N-1 and earlier data when predicting GW N+1. Check `shift(1)` on all rolling calculations in `features/`.
 
 **3. Off-by-One Errors** — Verify gameweek offsets, loop bounds, cross-season boundaries.
 
-**4. State Tracking** — Budget preservation, FT tracking, squad updates across simulations.
+**4. State Tracking Across Multi-Step Simulations** — The transfer planner, chip evaluator, and season manager all simulate multiple GWs. Check:
+- Budget preserved correctly (not shrinking when solver picks cheaper squad)
+- FTs tracked per FPL rules (banking, spending, chip effects)
+- Squad updates correctly (WC: permanent. FH: reverts. Normal: permanent.)
 
 **5. Hardcoded Values** — Check for magic numbers that should be in `config.py`.
 
 **6. DGW/BGW Handling** — Stats summed (not averaged) for DGW. BGW teams handled gracefully.
 
-**7. Injury/Availability Propagation** — All prediction columns zeroed. Propagates to all future GWs.
+**7. Injury/Availability Propagation** — THIS IS THE #1 BUG-PRONE AREA. Check:
+- ALL prediction columns zeroed (predicted_next_gw_points, captain_score, prediction_low/high)
+- 3-GW predictions re-zeroed AFTER the merge (they come from multi_gw.py which doesn't know about availability)
+- In strategy pipeline: `apply_availability_adjustments()` applied to all future GWs
+- Injured players excluded from transfer recommendations AND captain picks
 
-**8. Cache Staleness** — Is cached data fresh enough for each operation?
+**8. generate_recommendation() Orchestration** — Verify the flow:
+- Strategy pipeline runs FIRST (not after single-GW solver)
+- GW+1 extracted from timeline (not computed separately)
+- Single-GW solver is ONLY the fallback
+- Budget uses entry_history["value"], not sum(now_cost)
+- Chip plan from heatmap is passed to MultiWeekPlanner
+- Plan changelog detects chip reschedules and captain changes
 
-**9. Database Integrity** — No orphaned rows. Correct season_id/manager_id filtering.
+**9. Solver Fallbacks** — Every place the MILP solver is called in the strategy pipeline must handle `None` returns gracefully (solver can fail to find feasible solution). In particular:
+- `_simulate_chip_gw()` in transfer_planner.py must not return None
+- ChipEvaluator chip simulation must not abort on solver failure
+- Bank-vs-use analysis must handle solver returning None
 
-**10. MILP Solver Correctness** — Captain bonus, bench weight, all constraints correct.
+**10. Database Integrity** — No orphaned rows. Correct season_id/manager_id filtering. price_tracker includes season_id in returned dicts.
 
-**11. Frontend/Backend Contract** — Every field the frontend reads is returned by the backend.
+**11. MILP Solver Correctness** — Captain bonus, bench weight, all constraints correct. Validator trusts solver's hit count (not recomputed from set differences).
+
+**12. Frontend/Backend Contract** — Every field the frontend reads is returned by the backend. Key gotchas:
+- predictions.csv has `position_clean` not `position` — must alias
+- predictions.csv has no `cost` column — must enrich from bootstrap
+- `event_points` is raw (not captain-doubled) — must apply multiplier
+
+### Previously Found Bug Patterns (Check for Recurrence)
+
+These bugs have been found and fixed before. When auditing, specifically check that these patterns haven't been reintroduced:
+
+| Pattern | Where to Check | What Goes Wrong |
+|---------|---------------|-----------------|
+| Availability zeroing before 3-GW merge | `ml/prediction.py` | Injured players get non-zero 3-GW predictions |
+| Budget using now_cost sum | `season/manager.py` generate_recommendation | Budget ~5% too high, solver picks unaffordable squads |
+| Single-GW solver as primary path | `season/manager.py` generate_recommendation | Loses multi-GW planning intelligence |
+| Chip plan not passed to planner | `season/manager.py` _run_strategy_pipeline | Planner ignores chip schedule |
+| Solver failure kills planning | `strategy/transfer_planner.py` | One bad GW aborts the entire 5-GW plan |
+| Hit cost recomputed from sets | `solver/validator.py` | Forced replacements counted as paid hits |
+| Watchlist excluded from prices | `season/manager.py` _track_prices | Price alerts miss watched players |
+| pandas CoW without .copy() | `features/playerstats.py` | Silent data corruption |
 
 ### Output format
 For each issue: Severity (Critical/High/Medium), File:line, What's wrong, Expected behavior, Suggested fix.
@@ -613,52 +759,82 @@ For each issue: Severity (Critical/High/Medium), File:line, What's wrong, Expect
 
 ## Benchmarking Protocol
 
-When the user says **"run benchmarks"**, execute:
+When the user says **"run benchmarks"** or **"validate the model"**, execute this protocol. Run it after any model change, feature engineering change, or methodology fix.
 
 ### Step 1: Targeted Tests
-Write a script testing each specific change with focused assertions.
+Write a standalone Python script (in `/private/tmp/`) that tests each specific change with focused assertions:
+- Feature changes: Verify features present/absent in trained model feature lists
+- Computation fixes: Compare fixed computation against expected values
+- Logic changes: Test edge cases (COP=0, COP=50, COP=100)
+- Sanity checks: No negative predictions, no absurdly high predictions (>15 pts 1-GW)
 
 ### Step 2: Walk-Forward Backtest (Before/After)
 ```bash
+# Kill leftover processes
+lsof -ti:9874 | xargs kill -9
+
 # Baseline
-git stash && .venv/bin/python -m flask run --port 9874
-# POST /api/backtest {"start_gw":10,"end_gw":27}
-# Save results
+git stash
+FLASK_APP=src.api .venv/bin/python -m flask run --port 9874 &
+sleep 5
+curl -s -X POST http://127.0.0.1:9874/api/backtest -H 'Content-Type: application/json' -d '{"start_gw":10,"end_gw":27}'
+# Wait for completion (check /api/status SSE stream)
+curl -s http://127.0.0.1:9874/api/backtest-results > /private/tmp/backtest_baseline.json
+lsof -ti:9874 | xargs kill -9
 
 # After changes
-git stash pop && .venv/bin/python -m flask run --port 9874
-# Same backtest, compare
+git stash pop
+FLASK_APP=src.api .venv/bin/python -m flask run --port 9874 &
+sleep 5
+curl -s -X POST http://127.0.0.1:9874/api/backtest -H 'Content-Type: application/json' -d '{"start_gw":10,"end_gw":27}'
+curl -s http://127.0.0.1:9874/api/backtest-results > /private/tmp/backtest_postfix.json
 ```
 
 ### Key Metrics
 | Metric | Direction | Importance |
 |--------|-----------|------------|
 | `model_avg_mae` | Lower | Primary |
+| `model_avg_mae_played` | Lower | Primary |
 | `avg_spearman` | Higher | Primary |
+| `avg_ndcg_top20` | Higher | High |
 | `model_avg_top11_pts` | Higher | High |
 | `model_capture_pct` | Higher | High |
+| `model_wins` vs `ep_wins` | More wins | Medium |
 | `captain_hit_rate` | Higher | Medium |
+| `mae_pvalue` | Lower | Validation |
 
 ### Pass criteria
-- MAE must not increase
-- Top-11 points must not decrease
-- No more than 2 individual GWs should regress
+- `model_avg_mae` must not increase (same or lower)
+- `model_avg_top11_pts` must not decrease
+- No more than 2 individual GWs should regress in MAE
+- Per-position MAE: no position should regress by more than 0.05
+
+### Quick Reference
+```bash
+# Fetch results summary
+curl -s http://127.0.0.1:9874/api/backtest-results | python3 -c "
+import sys,json; r=json.load(sys.stdin); s=r['summary']
+print(f'MAE={s[\"model_avg_mae\"]:.4f} rho={s[\"avg_spearman\"]:.4f} top11={s[\"model_avg_top11_pts\"]:.1f} cap%={s[\"model_capture_pct\"]:.1f}%')
+print(f'vs ep: {s[\"model_wins\"]}W-{s[\"ep_wins\"]}L | MAE p={s.get(\"mae_pvalue\",\"?\")}')
+"
+
+# Spot-check top predicted players
+curl -s http://127.0.0.1:9874/api/predictions | python3 -c "
+import sys,json; d=json.load(sys.stdin)['players']
+d.sort(key=lambda x: x.get('predicted_next_gw_points',0), reverse=True)
+for p in d[:10]:
+    print(f\"{p['web_name']:15} {p['position']:3} {p.get('predicted_next_gw_points',0):.2f} pts\")
+"
+```
 
 ---
 
 ## Remaining TODO
 
-### Full Multi-GW Strategic Planning
-The strategy modules (`chip_evaluator.py`, `transfer_planner.py`, `captain_planner.py`, `plan_synthesizer.py`) are implemented but not yet wired into `generate_recommendation()`. Currently, the recommendation generates a single-GW plan. To enable full planning:
-1. Wire ChipEvaluator to produce chip heatmap
-2. Wire MultiWeekPlanner for 5-GW transfer plan
-3. Wire CaptainPlanner for pre-planned captaincy
-4. Wire PlanSynthesizer to combine everything into the strategic plan
-
 ### Authenticated FPL API Access
 For autonomous execution:
 1. FPL Authentication (email/password -> session cookies)
 2. Write API endpoints (execute transfers, set captain, activate chips)
-3. Exact selling prices (50% profit sharing on price rises)
+3. Exact selling prices (50% profit sharing on price rises — per-player, not just total)
 4. "Execute All" button with confirmation flow
 5. Safety guardrails (deadline awareness, rollback info, dry-run mode)

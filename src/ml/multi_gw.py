@@ -236,7 +236,8 @@ def predict_3gw(
         if gw_preds:
             gw_df = pd.concat(gw_preds, ignore_index=True)
             # Apply confidence decay
-            decay = 0.95 ** (offset - 1)
+            decay_table = pred_cfg.confidence_decay
+            decay = decay_table[offset - 1] if offset - 1 < len(decay_table) else 0.95 ** (offset - 1)
             gw_df["predicted_next_gw_points"] *= decay
             gw_df = gw_df.rename(columns={"predicted_next_gw_points": f"pred_gw{target_gw}"})
             per_gw_preds.append(gw_df)
@@ -336,7 +337,8 @@ def predict_multi_gw(
         result = pd.concat(gw_preds, ignore_index=True)
 
         # Confidence decay
-        confidence = 0.95 ** (offset - 1)
+        decay_table = pred_cfg.confidence_decay
+        confidence = decay_table[offset - 1] if offset - 1 < len(decay_table) else 0.95 ** (offset - 1)
         result["predicted_points"] = result["predicted_next_gw_points"] * confidence
         result["confidence"] = confidence
         result = result.drop(columns=["predicted_next_gw_points"])

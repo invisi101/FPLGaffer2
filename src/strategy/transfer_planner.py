@@ -406,17 +406,27 @@ class MultiWeekPlanner:
     def _simulate_chip_gw(
         self, gw, gw_chip, gw_df, squad_ids, budget, ft,
     ) -> dict | None:
-        """Simulate a WC/FH chip GW."""
-        pool = gw_df.dropna(subset=["predicted_points"])
-        if "position" not in pool.columns or "cost" not in pool.columns:
-            return None
+        """Simulate a WC/FH chip GW.
 
-        cap_col = (
-            "captain_score" if "captain_score" in pool.columns else None
-        )
-        result = solve_milp_team(
-            pool, "predicted_points", budget=budget, captain_col=cap_col,
-        )
+        Falls back to current squad's predicted points when the MILP
+        solver fails or when position/cost columns are missing, keeping
+        the planning path alive.  Only returns *None* when the
+        prediction data is completely empty.
+        """
+        pool = gw_df.dropna(subset=["predicted_points"])
+
+        result = None
+        if "position" in pool.columns and "cost" in pool.columns:
+            cap_col = (
+                "captain_score"
+                if "captain_score" in pool.columns
+                else None
+            )
+            result = solve_milp_team(
+                pool, "predicted_points",
+                budget=budget, captain_col=cap_col,
+            )
+
         if result:
             pts = result["starting_points"]
             new_squad_ids = {p["player_id"] for p in result["players"]}
@@ -432,21 +442,22 @@ class MultiWeekPlanner:
                 "chip": gw_chip,
                 "new_squad": result["players"],
             }
-        else:
-            # Solver failed, keep current squad
-            squad_preds = gw_df[gw_df["player_id"].isin(squad_ids)]
-            pts = self._squad_points_with_captain(squad_preds)
-            return {
-                "gw": gw,
-                "transfers_in": [],
-                "transfers_out": [],
-                "ft_used": 0,
-                "ft_available": ft,
-                "predicted_points": round(pts, 2),
-                "base_points": round(pts, 2),
-                "squad_ids": list(squad_ids),
-                "chip": gw_chip,
-            }
+
+        # Solver failed or columns missing -- fall back to current
+        # squad's predicted points so the path stays alive.
+        squad_preds = gw_df[gw_df["player_id"].isin(squad_ids)]
+        pts = self._squad_points_with_captain(squad_preds)
+        return {
+            "gw": gw,
+            "transfers_in": [],
+            "transfers_out": [],
+            "ft_used": 0,
+            "ft_available": ft,
+            "predicted_points": round(pts, 2),
+            "base_points": round(pts, 2),
+            "squad_ids": list(squad_ids),
+            "chip": gw_chip,
+        }
 
     def _simulate_bank_gw(
         self, gw, gw_chip, gw_df, squad_ids, ft,

@@ -102,7 +102,8 @@ def build_playerstats_features(
         result = result.sort_values(["player_id", "gameweek"])
         gw_mins = result.groupby("player_id")["cumulative_minutes"].diff()
         first = gw_mins.isna()
-        gw_mins[first] = result.loc[first, "cumulative_minutes"]
+        gw_mins = gw_mins.copy()  # force writeable copy for pandas CoW
+        gw_mins.loc[first] = result.loc[first, "cumulative_minutes"]
         result["availability_rate_last5"] = (
             (gw_mins > 0).astype(float)
             .groupby(result["player_id"])
