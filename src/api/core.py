@@ -132,9 +132,10 @@ def api_predictions():
     if search:
         pred_df = pred_df[pred_df["web_name"].str.lower().str.contains(search, na=False)]
 
-    sort_by = request.args.get("sort_by", "predicted_next_gw_points")
+    sort_by = request.args.get("sort", request.args.get("sort_by", "predicted_next_gw_points"))
+    sort_dir = request.args.get("dir", "desc")
     if sort_by in pred_df.columns:
-        pred_df = pred_df.sort_values(sort_by, ascending=False)
+        pred_df = pred_df.sort_values(sort_by, ascending=(sort_dir == "asc"))
 
     records = pred_df.head(500).to_dict(orient="records")
 

@@ -3623,6 +3623,36 @@ function renderMyTeam(d) {
     summary.after(banner);
   }
 
+  // Captain rationale banner
+  const oldCapBanner = document.getElementById('captainRationaleBanner');
+  if (oldCapBanner) oldCapBanner.remove();
+  const optSquadForBanner = d.optimized_squad || d.squad;
+  const capPlayer = optSquadForBanner.find(p => p.is_captain && p.starter);
+  if (capPlayer) {
+    const optStForBanner = optSquadForBanner.filter(p => p.starter && !p.is_captain);
+    const highestMean = optStForBanner.reduce((best, p) =>
+      (p.predicted_next_gw_points || 0) > (best.predicted_next_gw_points || 0) ? p : best
+    , optStForBanner[0]);
+    const capMean = Number(capPlayer.predicted_next_gw_points || 0);
+    const capQ80 = Number(capPlayer.predicted_next_gw_points_q80 || 0);
+    const highMean = highestMean ? Number(highestMean.predicted_next_gw_points || 0) : 0;
+
+    let bannerText = '';
+    if (!highestMean || capMean >= highMean) {
+      bannerText = `Captain: ${capPlayer.web_name} — highest base prediction (${capMean.toFixed(1)} × 2 = ${(capMean * 2).toFixed(1)}).`;
+    } else if (capQ80 > capMean) {
+      bannerText = `Captain: ${capPlayer.web_name} — predicted ${(capMean * 2).toFixed(1)} pts (${capMean.toFixed(1)} × 2), with explosive upside potential up to ${(capQ80 * 2).toFixed(1)} pts (${capQ80.toFixed(1)} × 2). Highest base prediction: ${highestMean.web_name} (${highMean.toFixed(1)} pts).`;
+    } else {
+      bannerText = `Captain: ${capPlayer.web_name} — captain score ${Number(capPlayer.captain_score || 0).toFixed(1)} vs ${highestMean.web_name} (${highMean.toFixed(1)} pts predicted).`;
+    }
+    const capBanner = document.createElement('div');
+    capBanner.id = 'captainRationaleBanner';
+    capBanner.style.cssText = 'background:var(--surface2);border-left:3px solid var(--green);padding:8px 12px;margin:8px 0;border-radius:4px;font-size:0.85em;color:var(--text2)';
+    capBanner.innerHTML = `<span style="color:var(--green)">&#9813;</span> ${bannerText}`;
+    const insertAfter = document.getElementById('fhRevertBanner') || summary;
+    insertAfter.after(capBanner);
+  }
+
   const starters = d.squad.filter(p => p.starter);
   const bench = d.squad.filter(p => !p.starter);
 

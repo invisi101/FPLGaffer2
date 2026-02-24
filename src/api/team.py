@@ -241,6 +241,7 @@ def api_my_team():
                 p["predicted_next_gw_points"] = safe_num(pr.get("predicted_next_gw_points", 0), 2)
                 p["captain_score"] = safe_num(pr.get("captain_score", 0), 2)
                 p["predicted_next_3gw_points"] = safe_num(pr.get("predicted_next_3gw_points", 0), 2)
+                p["predicted_next_gw_points_q80"] = safe_num(pr.get("predicted_next_gw_points_q80", 0), 2)
 
     # Optimized XI from the planning squad (reverted team after FH)
     optimized = optimize_starting_xi(planning_squad)
