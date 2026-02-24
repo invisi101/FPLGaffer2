@@ -58,7 +58,6 @@ cat > "$APP_DIR/Contents/MacOS/GafferAI" << LAUNCHER
 #!/bin/bash
 PROJECT_DIR="$PROJECT_DIR"
 cd "\$PROJECT_DIR"
-source .venv/bin/activate
 
 # If server is already running, just open the browser and exit
 if curl -s http://127.0.0.1:9876 >/dev/null 2>&1; then
@@ -67,7 +66,7 @@ if curl -s http://127.0.0.1:9876 >/dev/null 2>&1; then
 fi
 
 # Start Flask and open browser once ready
-python3 -m src &
+.venv/bin/python -m src &
 SERVER_PID=\$!
 
 # Wait for server to be ready (up to 30s)

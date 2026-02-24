@@ -136,6 +136,23 @@ def ensure_pipeline_data():
         return False
 
 
+def resolve_current_squad_event(history: dict, current_event: int) -> tuple[int, bool]:
+    """Detect Free Hit reversion: if FH was played in current_event, use pre-FH squad.
+
+    After a Free Hit, the squad reverts to the pre-FH state. When planning for
+    the next GW, we need picks from the GW before the FH was played.
+
+    Returns (squad_event, fh_reverted).
+    """
+    if not current_event or current_event < 2:
+        return current_event, False
+    chips = history.get("chips", [])
+    for chip in chips:
+        if chip.get("name") == "freehit" and chip.get("event") == current_event:
+            return current_event - 1, True
+    return current_event, False
+
+
 def calculate_free_transfers(history: dict) -> int:
     """Calculate free transfers available for the next GW.
 

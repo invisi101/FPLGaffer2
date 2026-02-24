@@ -14,6 +14,7 @@ from src.api.helpers import (
     load_bootstrap,
     load_predictions_from_csv,
     optimize_starting_xi,
+    resolve_current_squad_event,
     safe_num,
     scrub_nan,
 )
@@ -132,14 +133,27 @@ def api_my_team():
         return jsonify({"error": "Manager has no current event."}), 400
 
     try:
-        picks_data = fetch_manager_picks(manager_id, current_event)
-    except Exception as exc:
-        return jsonify({"error": f"Could not fetch picks: {exc}"}), 404
-
-    try:
         history = fetch_manager_history(manager_id)
     except Exception as exc:
         return jsonify({"error": f"Could not fetch history: {exc}"}), 404
+
+    # Detect Free Hit reversion: after FH, squad reverts to pre-FH state
+    squad_event, fh_reverted = resolve_current_squad_event(history, current_event)
+
+    # Always fetch actual GW picks (what was played) for the actual pitch
+    try:
+        actual_picks_data = fetch_manager_picks(manager_id, current_event)
+    except Exception as exc:
+        return jsonify({"error": f"Could not fetch picks: {exc}"}), 404
+
+    # For planning: use reverted (pre-FH) picks if FH was played
+    if fh_reverted:
+        try:
+            planning_picks_data = fetch_manager_picks(manager_id, squad_event)
+        except Exception as exc:
+            return jsonify({"error": f"Could not fetch pre-FH picks: {exc}"}), 404
+    else:
+        planning_picks_data = actual_picks_data
 
     bootstrap = load_bootstrap()
     if not bootstrap:
@@ -150,9 +164,9 @@ def api_my_team():
     team_map = get_team_map()
     free_transfers = calculate_free_transfers(history)
 
-    entry_history = picks_data.get("entry_history", {})
-    bank = entry_history.get("bank", 0) / 10
-    squad = []
+    # Budget from planning picks (reverted state after FH)
+    planning_entry_history = planning_picks_data.get("entry_history", {})
+    bank = planning_entry_history.get("bank", 0) / 10
 
     # Build fixture/FDR/opponent maps for the next GW
     next_gw = get_next_gw(bootstrap)
@@ -176,51 +190,65 @@ def api_my_team():
                     home_map[a_code] = False
                     opp_map[a_code] = code_to_short.get(h_code, "")
 
-    for pick in picks_data.get("picks", []):
-        eid = pick.get("element")
-        el = elements_map.get(eid, {})
-        tid = el.get("team")
-        tc = team_id_to_code.get(tid)
-        multiplier = pick.get("multiplier", 1)
-        raw_pts = el.get("event_points", 0)
-        squad.append({
-            "player_id": eid,
-            "web_name": el.get("web_name", "Unknown"),
-            "position": ELEMENT_TYPE_MAP.get(el.get("element_type"), ""),
-            "team_code": tc,
-            "team": team_map.get(tc, ""),
-            "cost": round(el.get("now_cost", 0) / 10, 1),
-            "total_points": el.get("total_points", 0),
-            "event_points_raw": raw_pts,
-            "event_points": raw_pts * multiplier,
-            "starter": pick.get("position", 12) <= 11,
-            "is_captain": pick.get("is_captain", False),
-            "is_vice_captain": pick.get("is_vice_captain", False),
-            "multiplier": multiplier,
-            "status": el.get("status", "a"),
-            "news": el.get("news", ""),
-            "chance_of_playing": el.get("chance_of_playing_next_round"),
-            "fdr": fdr_map.get(tc),
-            "opponent": opp_map.get(tc, ""),
-        })
+    def _build_squad(picks_data):
+        """Build squad list from picks data."""
+        result = []
+        for pick in picks_data.get("picks", []):
+            eid = pick.get("element")
+            el = elements_map.get(eid, {})
+            tid = el.get("team")
+            tc = team_id_to_code.get(tid)
+            multiplier = pick.get("multiplier", 1)
+            raw_pts = el.get("event_points", 0)
+            result.append({
+                "player_id": eid,
+                "web_name": el.get("web_name", "Unknown"),
+                "position": ELEMENT_TYPE_MAP.get(el.get("element_type"), ""),
+                "team_code": tc,
+                "team": team_map.get(tc, ""),
+                "cost": round(el.get("now_cost", 0) / 10, 1),
+                "total_points": el.get("total_points", 0),
+                "event_points_raw": raw_pts,
+                "event_points": raw_pts * multiplier,
+                "starter": pick.get("position", 12) <= 11,
+                "is_captain": pick.get("is_captain", False),
+                "is_vice_captain": pick.get("is_vice_captain", False),
+                "multiplier": multiplier,
+                "status": el.get("status", "a"),
+                "news": el.get("news", ""),
+                "chance_of_playing": el.get("chance_of_playing_next_round"),
+                "fdr": fdr_map.get(tc),
+                "opponent": opp_map.get(tc, ""),
+            })
+        return result
 
-    # Enrich with predictions
+    # Actual squad: what was played in current_event (FH team if FH was used)
+    squad = _build_squad(actual_picks_data)
+
+    # Planning squad: reverted team for optimization (pre-FH if FH was used)
+    if fh_reverted:
+        planning_squad = _build_squad(planning_picks_data)
+    else:
+        planning_squad = squad
+
+    # Enrich both squads with predictions
     pred_df = load_predictions_from_csv()
     if pred_df is not None and not pred_df.empty:
         pred_map = {int(row["player_id"]): row.to_dict() for _, row in pred_df.iterrows()}
-        for p in squad:
-            pr = pred_map.get(p["player_id"], {})
-            p["predicted_next_gw_points"] = safe_num(pr.get("predicted_next_gw_points", 0), 2)
-            p["captain_score"] = safe_num(pr.get("captain_score", 0), 2)
-            p["predicted_next_3gw_points"] = safe_num(pr.get("predicted_next_3gw_points", 0), 2)
+        for s in ([squad] if not fh_reverted else [squad, planning_squad]):
+            for p in s:
+                pr = pred_map.get(p["player_id"], {})
+                p["predicted_next_gw_points"] = safe_num(pr.get("predicted_next_gw_points", 0), 2)
+                p["captain_score"] = safe_num(pr.get("captain_score", 0), 2)
+                p["predicted_next_3gw_points"] = safe_num(pr.get("predicted_next_3gw_points", 0), 2)
 
-    # Optimized XI
-    optimized = optimize_starting_xi(squad)
+    # Optimized XI from the planning squad (reverted team after FH)
+    optimized = optimize_starting_xi(planning_squad)
 
     # Computed aggregates the frontend expects
-    squad_value = round(sum(p["cost"] for p in squad), 1)
-    sell_value = round(entry_history.get("value", 0) / 10, 1)
-    active_chip = picks_data.get("active_chip")
+    squad_value = round(sum(p["cost"] for p in planning_squad), 1)
+    sell_value = round(planning_entry_history.get("value", 0) / 10, 1)
+    active_chip = actual_picks_data.get("active_chip")
 
     xi_actual_gw = sum(
         p["event_points"] for p in squad if p["starter"]
@@ -234,7 +262,7 @@ def api_my_team():
         for p in optimized if p["starter"]
     ), 1)
 
-    return jsonify(scrub_nan({
+    resp = {
         "squad": squad,
         "optimized_squad": optimized,
         "bank": bank,
@@ -253,7 +281,12 @@ def api_my_team():
         "xi_pred_gw": xi_pred_gw,
         "xi_pred_3gw": xi_pred_3gw,
         "active_chip": active_chip,
-    }))
+    }
+    if fh_reverted:
+        resp["fh_reverted"] = True
+        resp["fh_event"] = current_event
+
+    return jsonify(scrub_nan(resp))
 
 
 # ---------------------------------------------------------------------------
@@ -291,14 +324,17 @@ def api_transfer_recommendations():
         return jsonify({"error": "Manager has no current event."}), 400
 
     try:
-        picks_data = fetch_manager_picks(manager_id, current_event)
-    except Exception as exc:
-        return jsonify({"error": f"Could not fetch picks: {exc}"}), 404
-
-    try:
         history = fetch_manager_history(manager_id)
     except Exception as exc:
         return jsonify({"error": f"Could not fetch history: {exc}"}), 404
+
+    # Detect Free Hit reversion: after FH, squad reverts to pre-FH state
+    squad_event, _fh_reverted = resolve_current_squad_event(history, current_event)
+
+    try:
+        picks_data = fetch_manager_picks(manager_id, squad_event)
+    except Exception as exc:
+        return jsonify({"error": f"Could not fetch picks: {exc}"}), 404
 
     free_transfers = calculate_free_transfers(history)
 

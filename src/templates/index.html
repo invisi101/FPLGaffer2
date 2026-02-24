@@ -3612,6 +3612,17 @@ function renderMyTeam(d) {
     ${chipHtml}
   `;
 
+  // Free Hit revert banner
+  const fhBanner = document.getElementById('fhRevertBanner');
+  if (fhBanner) fhBanner.remove();
+  if (d.fh_reverted) {
+    const banner = document.createElement('div');
+    banner.id = 'fhRevertBanner';
+    banner.style.cssText = 'background:var(--surface2);border-left:3px solid var(--yellow);padding:8px 12px;margin:8px 0;border-radius:4px;font-size:0.85em;color:var(--text2)';
+    banner.textContent = `Free Hit was played in GW${d.fh_event}. Showing your reverted GW${d.fh_event - 1} squad for planning.`;
+    summary.after(banner);
+  }
+
   const starters = d.squad.filter(p => p.starter);
   const bench = d.squad.filter(p => !p.starter);
 

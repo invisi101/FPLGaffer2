@@ -119,6 +119,19 @@ class SeasonManager:
         return None
 
     @staticmethod
+    def _resolve_current_squad_event(
+        history: dict, current_event: int,
+    ) -> tuple[int, bool]:
+        """Detect Free Hit reversion: if FH was played in current_event, use pre-FH squad."""
+        if not current_event or current_event < 2:
+            return current_event, False
+        chips = history.get("chips", [])
+        for chip in chips:
+            if chip.get("name") == "freehit" and chip.get("event") == current_event:
+                return current_event - 1, True
+        return current_event, False
+
+    @staticmethod
     def _calculate_free_transfers(history: dict) -> int:
         current = history.get("current", [])
         chips = history.get("chips", [])
@@ -504,13 +517,17 @@ class SeasonManager:
         elements = bootstrap.get("elements", [])
         id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
 
-        # Get current squad
+        # Get current squad (resolve FH reversion)
         entry = fetch_manager_entry(manager_id)
         current_event = entry.get("current_event")
         squad_ids: set[int] = set()
         if current_event:
             try:
-                picks_data = fetch_manager_picks(manager_id, current_event)
+                history = fetch_manager_history(manager_id)
+                squad_event, _ = self._resolve_current_squad_event(
+                    history, current_event,
+                )
+                picks_data = fetch_manager_picks(manager_id, squad_event)
                 squad_ids = {p["element"] for p in picks_data.get("picks", [])}
             except Exception:
                 pass
@@ -1159,8 +1176,16 @@ class SeasonManager:
         if not current_event:
             raise ValueError("Manager has no current event.")
 
-        picks_data = fetch_manager_picks(mid, current_event)
         history = fetch_manager_history(mid)
+
+        # Detect Free Hit reversion: after FH, squad reverts to pre-FH state
+        squad_event, fh_reverted = self._resolve_current_squad_event(
+            history, current_event,
+        )
+        if fh_reverted:
+            log(f"Free Hit played in GW{current_event} — using reverted GW{squad_event} squad.")
+
+        picks_data = fetch_manager_picks(mid, squad_event)
         free_transfers = self._calculate_free_transfers(history)
 
         elements_map = self._get_elements_map(bootstrap)
