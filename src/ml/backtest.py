@@ -2,7 +2,7 @@
 
 Retrains models from scratch for each test GW (no cached model
 contamination) and evaluates against actuals using production code paths:
-ensemble blend (85/15), DefCon scoring, and soft calibration caps.
+ensemble blend (70/30), DefCon scoring, and soft calibration caps.
 
 Metrics: MAE, Spearman rho, NDCG@20, top-11 points, capture %,
 captain hit rate, plus diagnostics and 3-GW rolling backtest.
@@ -312,11 +312,18 @@ def _run_season_backtest(
     end_gw: int,
     season: str,
     progress_callback=None,
-) -> tuple[list[dict], pd.DataFrame]:
+    *,
+    save_raw_preds: bool = False,
+) -> tuple[list[dict], pd.DataFrame] | tuple[list[dict], pd.DataFrame, dict]:
     """Walk-forward backtest for a single season.
 
     Returns ``(gameweek_results, pooled_predictions)`` where
     pooled_predictions is a concatenated DataFrame for diagnostics.
+
+    When *save_raw_preds* is True, returns a third element: a dict mapping
+    ``gw -> {"mean": DataFrame, "decomp": DataFrame, "actuals": dict,
+    "q80": DataFrame, "meta": DataFrame}`` for offline re-blending at
+    different ensemble weights.
     """
     season_df = df[df["season"] == season]
     available_gws = sorted(season_df["gameweek"].unique())
@@ -325,6 +332,7 @@ def _run_season_backtest(
     w_d = ensemble.decomposed_weight
     gameweek_results: list[dict] = []
     all_gw_predictions: list[pd.DataFrame] = []
+    raw_preds_by_gw: dict[int, dict] = {}
 
     for predict_gw in range(start_gw, end_gw + 1):
         snapshot_gw = predict_gw - 1
@@ -355,6 +363,8 @@ def _run_season_backtest(
         # --- Ensemble predictions: blend decomposed + mean ---
         pred_col = "predicted_next_gw_points"
         all_preds: list[pd.DataFrame] = []
+        gw_raw_mean: list[pd.DataFrame] = []
+        gw_raw_decomp: list[pd.DataFrame] = []
 
         for pos in POSITION_GROUPS:
             pos_sub_models = _train_backtest_sub_models(train_df, pos)
@@ -370,6 +380,19 @@ def _run_season_backtest(
                 if model_dict is not None
                 else pd.DataFrame()
             )
+
+            # Save raw predictions before blending (for grid search)
+            if save_raw_preds:
+                if not mean_preds.empty:
+                    mp = mean_preds[["player_id", pred_col]].copy()
+                    mp["position"] = pos
+                    mp = mp.rename(columns={pred_col: "mean_pred"})
+                    gw_raw_mean.append(mp)
+                if not decomp_preds.empty:
+                    dp = decomp_preds[["player_id", pred_col]].copy()
+                    dp["position"] = pos
+                    dp = dp.rename(columns={pred_col: "decomp_pred"})
+                    gw_raw_decomp.append(dp)
 
             # Blend (matches production ensemble)
             if not decomp_preds.empty and not mean_preds.empty:
@@ -416,6 +439,18 @@ def _run_season_backtest(
         if q80_preds:
             q80_df = pd.concat(q80_preds)
             pred_df = pred_df.merge(q80_df, on="player_id", how="left")
+
+        # Save raw data for offline re-blending
+        if save_raw_preds:
+            raw_mean_df = pd.concat(gw_raw_mean, ignore_index=True) if gw_raw_mean else pd.DataFrame()
+            raw_decomp_df = pd.concat(gw_raw_decomp, ignore_index=True) if gw_raw_decomp else pd.DataFrame()
+            raw_q80_df = pd.concat(q80_preds) if q80_preds else pd.DataFrame()
+            raw_preds_by_gw[predict_gw] = {
+                "mean": raw_mean_df,
+                "decomp": raw_decomp_df,
+                "actuals": actuals_dict,
+                "q80": raw_q80_df,
+            }
 
         # Composite captain score: blend mean + quantile for upside
         if "predicted_next_gw_points_q80" in pred_df.columns:
@@ -626,6 +661,8 @@ def _run_season_backtest(
         if all_gw_predictions
         else pd.DataFrame()
     )
+    if save_raw_preds:
+        return gameweek_results, pooled, raw_preds_by_gw
     return gameweek_results, pooled
 
 
@@ -937,6 +974,8 @@ def run_backtest(
     season: str = "",
     seasons: list[str] | None = None,
     progress_callback=None,
+    *,
+    save_raw_preds: bool = False,
 ) -> dict:
     """Run walk-forward backtest with per-GW model retraining.
 
@@ -947,6 +986,11 @@ def run_backtest(
 
     When *seasons* is provided, runs the backtest across multiple seasons
     and aggregates results.
+
+    When *save_raw_preds* is True, includes ``"raw_preds"`` in the result
+    dict — a mapping of ``gw -> {"mean": DataFrame, "decomp": DataFrame,
+    "actuals": dict, "q80": DataFrame}`` for offline re-blending at
+    different ensemble weights.
 
     Returns a dict with summary stats, per-GW results, per-position
     breakdown, diagnostics, and 3-GW rolling metrics.
@@ -962,10 +1006,20 @@ def run_backtest(
     # Collect gameweek results across all seasons
     gameweek_results: list[dict] = []
     all_pooled: list[pd.DataFrame] = []
+    all_raw_preds: dict[int, dict] = {}
 
     for s in season_list:
         log.info("  --- Season %s ---", s)
-        gw_results, pooled = _run_season_backtest(df, start_gw, end_gw, s, progress_callback=progress_callback)
+        bt_result = _run_season_backtest(
+            df, start_gw, end_gw, s,
+            progress_callback=progress_callback,
+            save_raw_preds=save_raw_preds,
+        )
+        if save_raw_preds:
+            gw_results, pooled, raw_preds = bt_result
+            all_raw_preds.update(raw_preds)
+        else:
+            gw_results, pooled = bt_result
         gameweek_results.extend(gw_results)
         if not pooled.empty:
             all_pooled.append(pooled)
@@ -1174,5 +1228,7 @@ def run_backtest(
     }
     if backtest_3gw:
         result["backtest_3gw"] = _json_safe(backtest_3gw)
+    if save_raw_preds:
+        result["raw_preds"] = all_raw_preds
 
     return result

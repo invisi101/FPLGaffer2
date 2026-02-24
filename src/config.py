@@ -37,7 +37,7 @@ class XGBConfig:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class EnsembleConfig:
-    decomposed_weight: float = 0.15  # 85/15 mean/decomposed blend
+    decomposed_weight: float = 0.30  # 70/30 mean/decomposed blend (empirically optimised via L9 grid search)
     captain_mean_weight: float = 0.4
     captain_q80_weight: float = 0.6
     differential_alpha: float = 0.3  # Ownership discount in mini_league mode

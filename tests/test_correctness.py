@@ -50,7 +50,7 @@ class TestConfigSanity:
 
     def test_ensemble_weights_valid(self):
         assert 0 < ensemble.decomposed_weight < 1
-        assert abs(ensemble.decomposed_weight - 0.15) < 1e-9
+        assert abs(ensemble.decomposed_weight - 0.30) < 1e-9
 
     def test_captain_weights_sum_to_one(self):
         total = ensemble.captain_mean_weight + ensemble.captain_q80_weight
@@ -303,13 +303,13 @@ class TestDecomposedScoring:
 # ===========================================================================
 
 class TestEnsembleBlend:
-    """The 85/15 ensemble blend must produce correctly weighted predictions."""
+    """The 70/30 ensemble blend must produce correctly weighted predictions."""
 
     def test_blend_formula(self):
-        w_d = ensemble.decomposed_weight  # 0.15
-        w_m = 1 - w_d                     # 0.85
-        blended = w_d * 3.0 + w_m * 5.0   # 0.45 + 4.25
-        assert blended == pytest.approx(4.7)
+        w_d = ensemble.decomposed_weight  # 0.30
+        w_m = 1 - w_d                     # 0.70
+        blended = w_d * 3.0 + w_m * 5.0   # 0.90 + 3.50
+        assert blended == pytest.approx(4.4)
 
     def test_blend_equals_input_when_equal(self):
         w_d = ensemble.decomposed_weight

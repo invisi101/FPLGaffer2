@@ -1,6 +1,6 @@
 """Prediction pipeline — 1-GW predictions with ensemble blending.
 
-Generates per-player predictions using the 85/15 mean/decomposed ensemble,
+Generates per-player predictions using the 70/30 mean/decomposed ensemble,
 adds quantile-based captain scores, prediction intervals, and availability
 adjustments.
 """
@@ -144,7 +144,7 @@ def _ensemble_predict_position(
     position: str,
     decomp_cache: dict | None = None,
 ) -> pd.DataFrame:
-    """Predict for a position using the 85/15 mean/decomposed ensemble blend.
+    """Predict for a position using the 70/30 mean/decomposed ensemble blend.
 
     If *decomp_cache* dict is provided, stores the full decomposed prediction
     DataFrame under ``key=position`` to avoid redundant recomputation.

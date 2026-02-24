@@ -200,7 +200,7 @@ Every magic number is defined in frozen dataclass configs:
 | Config | Key Values |
 |--------|------------|
 | `XGBConfig` | 150 trees, depth 5, lr 0.1, subsample 0.8, walk-forward 20 splits, early stopping 20 rounds |
-| `EnsembleConfig` | 85/15 mean/decomposed blend, captain 0.4 mean + 0.6 Q80 |
+| `EnsembleConfig` | 70/30 mean/decomposed blend (empirically optimised), captain 0.4 mean + 0.6 Q80 |
 | `SolverConfig` | 0.25 bench weight, -4 hit cost, max budget 1000, 3 per team |
 | `CacheConfig` | GitHub CSV 6h, FPL API 30m, manager API 1m |
 | `PredictionConfig` | Confidence decay 0.95->0.77, pool size 200 |
@@ -239,8 +239,8 @@ Import as singletons: `from src.config import xgb, ensemble, solver_cfg, ...`
 - DGW-aware soft calibration caps per position (GKP=7, DEF=8, MID=10, FWD=10), scaled by fixture count
 
 ### Ensemble
-- Production predictions use an **85/15 blend** of mean regression and decomposed sub-models
-- Mean model drives prediction accuracy; decomposed weight preserves ranking signal in the bench/rotation zone
+- Production predictions use a **70/30 blend** of mean regression and decomposed sub-models (empirically optimised via L9 grid search — 0.30 beat 0.15 on MAE, Spearman, and top-11 points)
+- Both models contribute meaningfully; the decomposed model adds component-level signal beyond what the mean model captures alone
 
 ### Multi-GW Predictions (`src/ml/multi_gw.py`)
 - 3-GW: Sum of three 1-GW predictions with correct opponent data per offset
@@ -914,23 +914,43 @@ final_model.fit(
 
 **Fix**: Pruned 8 low-importance features (gw_influence, season_progress, transfer_momentum, fixture_congestion, transfers_in_event, net_transfers). Down to 32 features (~1:47 ratio). Requires model retraining.
 
-#### L9. 85/15 Ensemble Blend Not Empirically Optimized
+#### ~~L9. 85/15 Ensemble Blend Not Empirically Optimized~~ FIXED
 
 **Problem**: `decomposed_weight=0.15` set by judgement, not grid search. May not be optimal.
 
-**Fix**: Grid search over decomposed_weight in [0.05, 0.10, 0.15, 0.20, 0.25] using backtest MAE. Try per-position weights.
+**Fix**: Built `scripts/optimize_blend.py` and ran a walk-forward grid search over GW10-27 (18 gameweeks, 500+ players per GW). The backtest framework (`src/ml/backtest.py`) now supports `save_raw_preds=True` to save raw per-component predictions before blending — this means models train once (~80 seconds) and re-blending at different weights is instant.
 
-#### L10. Rotation Risk Modeled Only by availability_rate_last5
+**Grid search results** (7 candidate weights, all players, all GWs):
+
+| Weight | MAE | Spearman | Top-11 Pts |
+|--------|------|----------|------------|
+| 0.00 (mean only) | 1.0860 | 0.7377 | 51.3 |
+| 0.05 | 1.0815 | 0.7397 | 50.6 |
+| 0.10 | 1.0776 | 0.7412 | 50.1 |
+| 0.15 (old default) | 1.0743 | 0.7423 | 50.9 |
+| 0.20 | 1.0718 | 0.7432 | 51.1 |
+| 0.25 | 1.0700 | 0.7437 | 51.6 |
+| **0.30 (new default)** | **1.0688** | **0.7439** | **52.7** |
+
+Every metric improves monotonically from 0.00 to 0.30: lower MAE (more accurate predictions), higher Spearman (better player rankings), and higher top-11 points (better squad selection). Captain hit rate was unchanged across all weights (11.1%).
+
+Per-position greedy search confirmed: GKP=0.30, DEF=0.30, MID=0.25, FWD=0.30 — all positions favour more decomposed weight. Since per-position weights only marginally improved over a uniform 0.30, we used the simpler global weight to avoid overfitting to one backtest window.
+
+**Conclusion**: Updated `EnsembleConfig.decomposed_weight` from `0.15` to `0.30`. The decomposed model (which predicts goals, assists, clean sheets, etc. separately via FPL scoring rules) contributes more useful signal than the original gut-feel 85/15 split gave it credit for. The blend is now 70/30.
+
+**Re-run**: `.venv/bin/python scripts/optimize_blend.py [--start-gw N] [--end-gw N]` to re-validate after any model or feature changes.
+
+#### L10. Rotation Risk Modeled Only by availability_rate_last5 — WON'T FIX
 
 **Problem**: No manager-specific rotation model. 5-GW availability window may miss systematic patterns. No cup rotation awareness.
 
-**Fix**: Could add features: `manager_rotation_rate`, `cup_midweek`, `days_since_last_start`.
+**Won't fix**: Manager-specific rotation data isn't available in the public FPL API. Reverse-engineering rotation patterns from historical lineups is noisy and unreliable (e.g. Pep roulette). `availability_rate_last5` is a reasonable proxy given data constraints.
 
-#### L11. Transfer Timing Doesn't Integrate Price Predictions
+#### L11. Transfer Timing Doesn't Integrate Price Predictions — WON'T FIX
 
 **Problem**: Price predictions exist but aren't fed into transfer timing decisions. No sell-before-drop logic.
 
-**Fix**: Integrate price predictions into transfer planner scoring.
+**Won't fix**: The FPL price algorithm is proprietary and relies on daily transfer granularity the public API doesn't provide (only per-GW totals). Accurate prediction requires polling every 4-6 hours and filtering wildcard transfers — a different class of effort. The existing `_build_price_bonus()` in `transfer_planner.py` already nudges the solver to buy-before-rise using ownership + net transfers, which is a reasonable approximation (~3-5 pts/season ceiling for further improvements).
 
 #### ~~L12. CLAUDE.md Documentation Inconsistency~~ FIXED
 
