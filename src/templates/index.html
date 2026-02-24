@@ -6766,7 +6766,7 @@ function renderMonsters(categories) {
       // Format stat value
       let statDisplay = p.stat_value;
       if (typeof statDisplay === 'number') {
-        statDisplay = statDisplay >= 10 ? Math.round(statDisplay) : statDisplay.toFixed(2);
+        statDisplay = Math.round(statDisplay);
       }
 
       html += `<div class="monster-card rank-${rank}">
