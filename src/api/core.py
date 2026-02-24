@@ -85,6 +85,21 @@ def api_predictions():
                 pred_df.at[idx, "ownership"] = safe_num(el.get("selected_by_percent", 0), 1)
                 pred_df.at[idx, "chance_of_playing"] = el.get("chance_of_playing_next_round")
 
+    # Enrich with last-GW minutes from live data
+    next_gw = get_next_gw(bootstrap)
+    last_gw = (next_gw - 1) if next_gw and next_gw > 1 else None
+    pred_df["event_minutes"] = None
+    if last_gw:
+        from src.data.fpl_api import fetch_event_live
+        live = fetch_event_live(last_gw)
+        if live:
+            live_mins = {el["id"]: el.get("stats", {}).get("minutes", 0)
+                         for el in live.get("elements", [])}
+            for idx, row in pred_df.iterrows():
+                pid = int(row["player_id"]) if pd.notna(row.get("player_id")) else None
+                if pid and pid in live_mins:
+                    pred_df.at[idx, "event_minutes"] = live_mins[pid]
+
     # Enrich with team names
     if "team_code" in pred_df.columns:
         pred_df["team"] = pred_df["team_code"].map(team_map).fillna("")

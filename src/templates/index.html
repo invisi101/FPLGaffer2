@@ -2615,6 +2615,7 @@ function getColumns() {
     { key: 'team',                      label: 'Team',           fmt: 'text' },
     { key: 'cost',                      label: 'Cost',           fmt: 'num1' },
     { key: 'player_form',               label: 'Form',           fmt: 'num1' },
+    { key: 'event_minutes',             label: nextGW ? `Last GW Mins (${nextGW-1})` : 'Last GW Mins', fmt: 'num0' },
     { key: 'event_points',              label: nextGW ? `Last GW (${nextGW-1})` : 'Last GW', fmt: 'num0' },
     { key: 'total_points',              label: 'Total',            fmt: 'num0' },
     { key: 'predicted_next_gw_points',  label: `Pred ${gwLabel}`,  fmt: 'num2' },
