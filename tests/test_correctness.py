@@ -348,11 +348,11 @@ class TestCaptainScore:
     def test_formula_values(self):
         mean, q80 = 6.0, 8.0
         score = ensemble.captain_mean_weight * mean + ensemble.captain_q80_weight * q80
-        assert score == pytest.approx(7.2)
+        assert score == pytest.approx(6.6)
 
-    def test_q80_weighted_more_heavily(self):
-        """Q80 has higher weight to capture explosive upside."""
-        assert ensemble.captain_q80_weight > ensemble.captain_mean_weight
+    def test_mean_weighted_more_heavily(self):
+        """Mean has higher weight — empirically optimised (0.7/0.3 beat 0.4/0.6)."""
+        assert ensemble.captain_mean_weight > ensemble.captain_q80_weight
 
     def test_fallback_when_q80_missing(self):
         """When Q80 is NaN, falls back to mean (the code does .fillna(mean))."""

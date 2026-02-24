@@ -81,7 +81,7 @@ src/
 │   ├── prices_bp.py         # Prices, predictions, history, watchlist
 │   ├── backtest_bp.py       # Walk-forward backtesting
 │   ├── compare_bp.py        # GW compare (actual vs hindsight-best)
-│   ├── helpers.py           # Shared: safe_num, scrub_nan, load_bootstrap, get_next_gw
+│   ├── helpers.py           # Shared: safe_num, scrub_nan, load_bootstrap, get_next_gw, resolve_current_squad_event
 │   ├── middleware.py         # CORS, error handlers
 │   └── sse.py               # Server-Sent Events, background task runner
 │
@@ -200,7 +200,7 @@ Every magic number is defined in frozen dataclass configs:
 | Config | Key Values |
 |--------|------------|
 | `XGBConfig` | 150 trees, depth 5, lr 0.1, subsample 0.8, walk-forward 20 splits, early stopping 20 rounds |
-| `EnsembleConfig` | 70/30 mean/decomposed blend (empirically optimised), captain 0.4 mean + 0.6 Q80 |
+| `EnsembleConfig` | 70/30 mean/decomposed blend (empirically optimised), captain 0.7 mean + 0.3 Q80 (empirically optimised) |
 | `SolverConfig` | 0.25 bench weight, -4 hit cost, max budget 1000, 3 per team |
 | `CacheConfig` | GitHub CSV 6h, FPL API 30m, manager API 1m |
 | `PredictionConfig` | Confidence decay 0.95->0.77, pool size 200 |
@@ -225,7 +225,7 @@ Import as singletons: `from src.config import xgb, ensemble, solver_cfg, ...`
 
 ### Tier 2: Quantile Models (Captain Picks)
 - MID + FWD only, 80th percentile of next_gw_points
-- `captain_score = 0.4 x mean + 0.6 x Q80` — captures explosive upside
+- `captain_score = 0.7 x mean + 0.3 x Q80` — empirically optimised (0.7/0.3 beat 0.4/0.6 by +12 pts over 18 GWs in walk-forward backtest)
 
 ### Tier 3: Decomposed Sub-Models
 - Position-specific component models predicting individual scoring elements:
@@ -605,6 +605,17 @@ gw_mins["played"] = gw_mins["minutes_played"] > 0
 
 `strategy/price_tracker.py` functions that return player dicts must include `"season_id": season_id` so the repository can correctly filter snapshots.
 
+### 9. Free Hit Squad Revert Must Use Pre-FH Picks
+
+After playing Free Hit, the squad reverts to the pre-FH squad. Any code fetching the "current squad" for planning purposes must call `resolve_current_squad_event()` (in `api/helpers.py`) or `SeasonManager._resolve_current_squad_event()` to detect FH usage and fetch picks from the pre-FH gameweek instead. This affects:
+
+- `api/team.py: api_my_team()` — fetches BOTH actual (FH GW) picks for display AND reverted picks for planning/optimization
+- `api/team.py: api_transfer_recommendations()` — uses reverted picks as the base squad for transfer solving
+- `season/manager.py: generate_recommendation()` — uses reverted picks for the full strategy pipeline
+- `season/manager.py: _track_prices()` — uses reverted squad for price tracking
+
+The My Team page uses a dual-fetch pattern: `actual_picks_data` (FH GW) for the "actual" pitch display, `planning_picks_data` (pre-FH GW) for the optimized squad and transfer recommendations.
+
 ---
 
 ## Testing
@@ -613,7 +624,7 @@ gw_mins["played"] = gw_mins["minutes_played"] > 0
 # Kill leftover server
 lsof -ti:9876 | xargs kill -9
 
-# Run all tests (99 total, ~5 min)
+# Run all tests (103 total, ~10 min)
 .venv/bin/python -m pytest tests/ -v
 
 # Run fast tests only (~1 sec)
@@ -711,6 +722,7 @@ Full audit completed: 103 tests passed, 0 failures. 0 bugs found. All 8 previous
 | Hit cost recomputed from sets | PASS | `solver/validator.py:112-124` trusts solver's hits |
 | Watchlist excluded from prices | PASS | `season/manager.py:519-521` includes watchlist |
 | pandas CoW without .copy() | PASS | `features/playerstats.py:105` has .copy() |
+| FH squad not reverted for planning | PASS | `api/team.py`, `season/manager.py` call `resolve_current_squad_event()` |
 
 ---
 
@@ -751,7 +763,7 @@ Load calibrator from metadata when loading each position model.
 
 #### ~~H2. Quantile Model (Q80) Lacks Early Stopping (~15-20 pts/season, Low effort)~~ FIXED
 
-**Problem**: The mean model uses `early_stopping_rounds=20` with a validation split (`training.py:202-203`), but the Q80 quantile model trains all 150 trees with no early stopping (`training.py:392-400`). Q80 directly drives captain selection via `captain_score = 0.4*mean + 0.6*Q80`. An overfitted Q80 produces unreliable captain scores — it may flag "explosive" weeks that are actually noise.
+**Problem**: The mean model uses `early_stopping_rounds=20` with a validation split (`training.py:202-203`), but the Q80 quantile model trains all 150 trees with no early stopping (`training.py:392-400`). Q80 directly drives captain selection via `captain_score = 0.7*mean + 0.3*Q80`. An overfitted Q80 produces unreliable captain scores — it may flag "explosive" weeks that are actually noise.
 
 **Fix**: Copy the validation-split + early-stopping pattern from `train_model` (lines 274-286) into `train_quantile_model` (lines 388-400).
 
@@ -940,6 +952,12 @@ Per-position greedy search confirmed: GKP=0.30, DEF=0.30, MID=0.25, FWD=0.30 —
 
 **Re-run**: `.venv/bin/python scripts/optimize_blend.py [--start-gw N] [--end-gw N]` to re-validate after any model or feature changes.
 
+#### Captain Score Weights — Empirically Optimised
+
+Captain formula changed from `0.4*mean + 0.6*Q80` to `0.7*mean + 0.3*Q80` based on walk-forward analysis using `scripts/analyze_captain.py`. Over GW10-27 (18 GWs), the 0.7/0.3 formula scored 256 pts vs 244 for the old 0.4/0.6 formula. Pure mean scored 242, pure Q80 scored 222. The Q80 model adds value but was previously overweighted.
+
+**Re-run**: `.venv/bin/python scripts/analyze_captain.py` to re-validate captain weights after model changes.
+
 #### L10. Rotation Risk Modeled Only by availability_rate_last5 — WON'T FIX
 
 **Problem**: No manager-specific rotation model. 5-GW availability window may miss systematic patterns. No cup rotation awareness.
@@ -1068,7 +1086,7 @@ If an agent finds nothing wrong for an item, it still reports PASS with the file
 
 **Checklist — answer every item:**
 
-1. **Ensemble blend**: Read `_ensemble_predict_position` in `prediction.py`. Verify weights match `EnsembleConfig.decomposed_weight` (0.15). Verify the `how="outer"` merge doesn't drop players. Verify the `np.where` fallback logic.
+1. **Ensemble blend**: Read `_ensemble_predict_position` in `prediction.py`. Verify weights match `EnsembleConfig.decomposed_weight` (0.30). Verify the `how="outer"` merge doesn't drop players. Verify the `np.where` fallback logic.
 2. **Availability zeroing**: In `generate_predictions()`, find where predictions are zeroed for unavailable players. Verify ALL prediction columns are zeroed (predicted_*, prediction_*, captain_score). **CRITICAL**: Verify that `predicted_next_3gw_points` is re-zeroed AFTER the 3-GW merge at the bottom of the function. Cite both zeroing locations with line numbers.
 3. **DGW prediction summing**: In both `predict_for_position` and `predict_decomposed`, find the DGW deduplication logic. Verify predictions are SUMMED (not averaged) per player. Cite lines.
 4. **Multi-GW snapshots**: Read `_build_offset_snapshot` in `multi_gw.py` end to end. Verify: (a) fixture columns are dropped and replaced, (b) interaction features are recomputed, (c) lookahead features (avg_fdr_next3, home_pct_next3, avg_opponent_elo_next3) are recomputed relative to `target_gw` not `latest_gw`.
@@ -1101,6 +1119,7 @@ If an agent finds nothing wrong for an item, it still reports PASS with the file
 | Hit cost recomputed from sets | `solver/validator.py` | Forced replacements counted as paid hits |
 | Watchlist excluded from prices | `season/manager.py` _track_prices | Price alerts miss watched players |
 | pandas CoW without .copy() | `features/playerstats.py` | Silent data corruption |
+| FH squad not reverted for planning | `api/team.py`, `season/manager.py` | Planning uses FH squad instead of reverted pre-FH squad |
 
 ---
 
@@ -1143,7 +1162,7 @@ These agents evaluate whether the mathematical and statistical choices are SOUND
 1. **Model calibration**: Known overprediction at 5+ points (pred=5.95, actual=4.24). Is this because of: (a) XGBoost regression to mean at extremes, (b) soft caps not aggressive enough, (c) training data distribution, or (d) something else? What would fix it?
 2. **Soft caps** (GKP=7, DEF=8, MID=10, FWD=10): Are these suppressing genuine haul predictions? Should caps be DGW-aware (2x cap for DGW)? What percentage of predictions hit the cap?
 3. **Confidence decay** (0.95, 0.93, 0.90, 0.87, 0.83, 0.80, 0.77): Is this curve too aggressive or too conservative? Should it vary by position (FWD rotate more)? Is the decay shape (roughly linear) correct, or should it be exponential/sigmoid?
-4. **Captain formula** (0.4 * mean + 0.6 * Q80): Is 60% Q80 weight the right balance for identifying explosive captaincy upside? Only MID/FWD have Q80 models — should GKP/DEF have captaincy scoring? (Probably not, but justify.)
+4. **Captain formula** (0.7 * mean + 0.3 * Q80): Empirically optimised from 0.4/0.6 to 0.7/0.3 via walk-forward backtest (+12 pts over 18 GWs). Only MID/FWD have Q80 models — should GKP/DEF have captaincy scoring? (Probably not, but justify.)
 5. **XGBoost hyperparameters** (n_estimators=150, max_depth=5, learning_rate=0.1, subsample=0.8): Overfitting or underfitting? With walk-forward using 20 splits, is there enough data per fold? Would early stopping improve robustness?
 6. **Sample weighting** (current_season=1.0, previous=0.5): Does this help or hurt? Would 0.7/0.3 or 0.8/0.2 be better? Does the game change enough season-to-season to justify heavy discounting?
 7. **Bench weight** (0.25): What does this produce in practice? Is 0.25 too low (terrible bench = bad auto-subs) or too high (weakens starters)? What's the expected auto-sub frequency in FPL?
@@ -1232,6 +1251,7 @@ For each previously found bug pattern, state PASS or REINTRODUCED:
 | Hit cost recomputed from sets | PASS/REINTRODUCED | file:line |
 | Watchlist excluded from prices | PASS/REINTRODUCED | file:line |
 | pandas CoW without .copy() | PASS/REINTRODUCED | file:line |
+| FH squad not reverted for planning | PASS/REINTRODUCED | file:line |
 
 **Section 4: Top 5 Actions**
 Ranked by expected improvement to season performance:
