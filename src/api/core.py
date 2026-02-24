@@ -315,6 +315,8 @@ def api_monsters():
             "bonus": el.get("bonus", 0) or 0,
             "saves": el.get("saves", 0) or 0,
             "defcon": el.get("defensive_contribution", 0) or 0,
+            "yellow_cards": el.get("yellow_cards", 0) or 0,
+            "red_cards": el.get("red_cards", 0) or 0,
             "penalties_order": el.get("penalties_order") or 99,
             "corners_order": el.get("corners_and_indirect_freekicks_order") or 99,
             "fk_order": el.get("direct_freekicks_order") or 99,
@@ -418,6 +420,36 @@ def api_monsters():
         "id": "clean_sheet_machines", "title": "Clean Sheet Machines", "emoji": "\U0001f9e4",
         "subtitle": "The brick walls",
         "players": [_card(r, r["clean_sheets"], "Clean Sheets") for _, r in top.iterrows()],
+    })
+
+    # 8. Dirty Dogs (most fouls committed)
+    from src.data.season_detection import detect_current_season
+    season = detect_current_season(bootstrap)
+    pms_files = sorted(CACHE_DIR.glob(f"{season}_gw*_playermatchstats.csv"))
+    if pms_files:
+        pms_frames = [pd.read_csv(f, usecols=["player_id", "fouls_committed"]) for f in pms_files]
+        fouls_df = pd.concat(pms_frames).groupby("player_id", as_index=False)["fouls_committed"].sum()
+        df = df.merge(fouls_df, on="player_id", how="left")
+        df["fouls_committed"] = df["fouls_committed"].fillna(0).astype(int)
+    else:
+        df["fouls_committed"] = 0
+    top = df.nlargest(3, "fouls_committed")
+    categories.append({
+        "id": "dirty_dogs", "title": "Dirty Dogs", "emoji": "\U0001f7e8",
+        "subtitle": "The foul-happy merchants",
+        "players": [_card(r, r["fouls_committed"], "Fouls") for _, r in top.iterrows()],
+    })
+
+    # 9. See Ya' (most red cards)
+    reds = df[df["red_cards"] > 0]
+    if len(reds) >= 3:
+        top = reds.nlargest(3, "red_cards")
+    else:
+        top = df.nlargest(3, "red_cards")
+    categories.append({
+        "id": "see_ya", "title": "See Ya'", "emoji": "\U0001f7e5",
+        "subtitle": "Early bath specialists",
+        "players": [_card(r, r["red_cards"], "Reds") for _, r in top.iterrows()],
     })
 
     return jsonify({"categories": scrub_nan(categories)})
