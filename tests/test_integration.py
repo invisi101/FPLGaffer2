@@ -44,7 +44,6 @@ def test_api_routes_exist(app):
         "/api/season/init",
         "/api/season/status",
         "/api/season/dashboard",
-        "/api/season/strategic-plan",
         "/api/season/prices",
         "/api/season/watchlist",
         "/api/v2/season/init",

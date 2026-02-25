@@ -1,4 +1,4 @@
-"""Strategy blueprint — strategic plan, action plan, plan health, preseason."""
+"""Strategy blueprint — action plan, outcomes, preseason."""
 
 import json
 
@@ -25,59 +25,6 @@ def _require_season(mgr, manager_id):
     if not season:
         return None, (jsonify({"error": "No active season."}), 404)
     return season, None
-
-
-# ---------------------------------------------------------------------------
-# Strategic Plan (GET/POST)
-# ---------------------------------------------------------------------------
-
-@strategy_bp.route("/season/strategic-plan", methods=["GET", "POST"])
-def api_season_strategic_plan():
-    """Generate (POST) or fetch (GET) strategic plan."""
-    if request.method == "POST":
-        body = request.get_json(silent=True) or {}
-        manager_id, err = require_manager_id(body, "body")
-        if err:
-            return jsonify(err[0]), err[1]
-
-        mgr = _get_mgr()
-
-        def do_plan():
-            mgr.generate_recommendation(manager_id, progress_fn=broadcast)
-
-        started = run_in_background("Strategic Plan", do_plan)
-        if not started:
-            return jsonify({"error": "Another task is already running."}), 409
-        return jsonify({"status": "started"})
-
-    # GET
-    manager_id, err = require_manager_id(request.args)
-    if err:
-        return jsonify(err[0]), err[1]
-
-    mgr = _get_mgr()
-    season, serr = _require_season(mgr, manager_id)
-    if serr:
-        return serr
-
-    plan_row = mgr.plans.get_strategic_plan(season["id"])
-    if not plan_row:
-        return jsonify({"error": "No strategic plan generated yet."}), 404
-
-    plan = {}
-    try:
-        plan = json.loads(plan_row.get("plan_json") or "{}")
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    changelog = mgr.plans.get_plan_changelog(season["id"], limit=20)
-
-    return jsonify({
-        "plan": plan,
-        "as_of_gw": plan_row.get("as_of_gw"),
-        "created_at": plan_row.get("created_at"),
-        "changelog": changelog,
-    })
 
 
 # ---------------------------------------------------------------------------
@@ -110,40 +57,6 @@ def api_season_outcomes():
     mgr = _get_mgr()
     outcomes = mgr.get_outcomes(manager_id)
     return jsonify({"outcomes": outcomes})
-
-
-# ---------------------------------------------------------------------------
-# Plan Health
-# ---------------------------------------------------------------------------
-
-@strategy_bp.route("/season/plan-health")
-def api_season_plan_health():
-    manager_id, err = require_manager_id(request.args)
-    if err:
-        return jsonify(err[0]), err[1]
-
-    mgr = _get_mgr()
-    result = mgr.check_plan_health(manager_id)
-    return jsonify(result)
-
-
-# ---------------------------------------------------------------------------
-# Plan Changelog
-# ---------------------------------------------------------------------------
-
-@strategy_bp.route("/season/plan-changelog")
-def api_season_plan_changelog():
-    manager_id, err = require_manager_id(request.args)
-    if err:
-        return jsonify(err[0]), err[1]
-
-    mgr = _get_mgr()
-    season, serr = _require_season(mgr, manager_id)
-    if serr:
-        return serr
-
-    changelog = mgr.plans.get_plan_changelog(season["id"])
-    return jsonify({"changelog": changelog})
 
 
 # ---------------------------------------------------------------------------
@@ -189,18 +102,8 @@ def api_preseason_result():
     except (json.JSONDecodeError, TypeError):
         pass
 
-    plan_row = mgr.plans.get_strategic_plan(season["id"])
-    chip_schedule = {}
-    if plan_row:
-        try:
-            plan = json.loads(plan_row.get("plan_json") or "{}")
-            chip_schedule = plan.get("chip_schedule", {})
-        except (json.JSONDecodeError, TypeError):
-            pass
-
     return jsonify({
         "initial_squad": squad,
         "predicted_points": rec.get("predicted_points"),
         "captain": {"id": rec.get("captain_id"), "name": rec.get("captain_name")},
-        "chip_schedule": chip_schedule,
     })
