@@ -737,9 +737,311 @@ class SeasonManagerV2:
         return alerts
 
     def _tick_complete(self, manager_id, season, status):
-        """Record results and advance to next GW. (Implemented in Task 14.)"""
-        logger.info("COMPLETE phase: result recording not yet implemented")
-        return []
+        """Record results for the just-completed GW and advance phase.
+
+        1. Fetch actual picks, history, live event data from FPL API
+        2. Build squad with live points (captain doubling applied)
+        3. Save gw_snapshot
+        4. Compare to recommendation (if one exists) and save outcome
+        5. Update season current_gw
+        6. Transition to PLANNING (or SEASON_OVER if GW38)
+        """
+        from src.api.helpers import calculate_free_transfers
+        from src.data.fpl_api import (
+            fetch_event_live,
+            fetch_fpl_api,
+            fetch_manager_history,
+            fetch_manager_picks,
+            fetch_manager_transfers,
+        )
+
+        alerts: list[dict] = []
+        season_id = status["season_id"]
+        completed_gw = status.get("current_gw")
+
+        if not completed_gw:
+            logger.error("No current_gw in status — cannot record results")
+            return alerts
+
+        logger.info(
+            "COMPLETE phase: recording results for GW%d (manager %d)",
+            completed_gw, manager_id,
+        )
+
+        # ── 1. Fetch data from FPL API ────────────────────────────────────
+        try:
+            bootstrap = fetch_fpl_api("bootstrap", force=True)
+        except Exception as exc:
+            logger.error("Failed to fetch bootstrap: %s", exc)
+            alerts.append({
+                "type": "error",
+                "message": f"Failed to record GW{completed_gw}: bootstrap unavailable",
+            })
+            return alerts
+
+        if not bootstrap:
+            alerts.append({
+                "type": "error",
+                "message": f"Failed to record GW{completed_gw}: bootstrap unavailable",
+            })
+            return alerts
+
+        try:
+            picks_data = fetch_manager_picks(manager_id, completed_gw)
+        except Exception as exc:
+            logger.error("Failed to fetch picks for GW%d: %s", completed_gw, exc)
+            alerts.append({
+                "type": "error",
+                "message": f"Failed to record GW{completed_gw}: could not fetch picks",
+            })
+            return alerts
+
+        if not picks_data:
+            alerts.append({
+                "type": "error",
+                "message": f"Failed to record GW{completed_gw}: no picks data",
+            })
+            return alerts
+
+        try:
+            history = fetch_manager_history(manager_id)
+        except Exception as exc:
+            logger.error("Failed to fetch history: %s", exc)
+            alerts.append({
+                "type": "error",
+                "message": f"Failed to record GW{completed_gw}: could not fetch history",
+            })
+            return alerts
+
+        if not history:
+            alerts.append({
+                "type": "error",
+                "message": f"Failed to record GW{completed_gw}: no history data",
+            })
+            return alerts
+
+        # ── 2. Build lookup maps ──────────────────────────────────────────
+        elements_map = {el["id"]: el for el in bootstrap.get("elements", [])}
+        id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
+        code_to_short = {t["code"]: t["short_name"] for t in bootstrap.get("teams", [])}
+
+        # Live points (more accurate than bootstrap event_points)
+        live_points_map: dict[int, int] = {}
+        try:
+            live_data = fetch_event_live(completed_gw, force=True)
+            for el_live in live_data.get("elements", []):
+                live_points_map[el_live["id"]] = (
+                    el_live.get("stats", {}).get("total_points", 0)
+                )
+            logger.info(
+                "Loaded live points for GW%d (%d players)",
+                completed_gw, len(live_points_map),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not fetch live event data (%s), falling back to bootstrap",
+                exc,
+            )
+
+        # ── 3. Build squad from picks ─────────────────────────────────────
+        picks = picks_data.get("picks", [])
+        squad = []
+        captain_id = None
+        captain_name = None
+        for pick in picks:
+            eid = pick.get("element")
+            el = elements_map.get(eid, {})
+            tid = el.get("team")
+            tc = id_to_code.get(tid)
+            pos = ELEMENT_TYPE_MAP.get(el.get("element_type"), "")
+            # Use live event points when available, fall back to bootstrap
+            raw_pts = live_points_map.get(eid, el.get("event_points", 0))
+            player = {
+                "player_id": eid,
+                "web_name": el.get("web_name", "Unknown"),
+                "position": pos,
+                "team_code": tc,
+                "team": code_to_short.get(tc, ""),
+                "cost": el.get("now_cost", 0) / 10,
+                "starter": pick.get("position", 12) <= 11,
+                "is_captain": pick.get("is_captain", False),
+                "multiplier": pick.get("multiplier", 1),
+                "event_points": raw_pts * pick.get("multiplier", 1),
+            }
+            squad.append(player)
+            if pick.get("is_captain"):
+                captain_id = eid
+                captain_name = el.get("web_name", "Unknown")
+
+        # ── 4. GW data from history ───────────────────────────────────────
+        gw_entries = history.get("current", [])
+        gw_data = next(
+            (g for g in gw_entries if g["event"] == completed_gw), {}
+        )
+        chip_map = {c["event"]: c["name"] for c in history.get("chips", [])}
+
+        entry_hist = picks_data.get("entry_history", {})
+
+        # ── 5. Fetch transfers for this GW ────────────────────────────────
+        t_in_list = []
+        t_out_list = []
+        try:
+            all_transfers = fetch_manager_transfers(manager_id)
+            gw_transfers = [
+                t for t in all_transfers if t["event"] == completed_gw
+            ]
+            for t in gw_transfers:
+                el_in = elements_map.get(t["element_in"], {})
+                el_out = elements_map.get(t["element_out"], {})
+                t_in_list.append({
+                    "player_id": t["element_in"],
+                    "web_name": el_in.get("web_name", "Unknown"),
+                    "cost": t.get("element_in_cost", 0) / 10,
+                })
+                t_out_list.append({
+                    "player_id": t["element_out"],
+                    "web_name": el_out.get("web_name", "Unknown"),
+                    "cost": t.get("element_out_cost", 0) / 10,
+                })
+        except Exception as exc:
+            logger.warning("Could not fetch transfers: %s", exc)
+            gw_transfers = []
+
+        # ── 6. Save gw_snapshot ───────────────────────────────────────────
+        free_transfers = calculate_free_transfers(history)
+
+        self.snapshots.save_gw_snapshot(
+            season_id=season_id,
+            gameweek=completed_gw,
+            squad_json=json.dumps(squad),
+            bank=(
+                entry_hist.get("bank", gw_data.get("bank", 0)) / 10
+                if entry_hist
+                else gw_data.get("bank", 0) / 10
+            ),
+            team_value=(
+                (
+                    entry_hist.get("value", gw_data.get("value", 0))
+                    - entry_hist.get("bank", gw_data.get("bank", 0))
+                )
+                / 10
+                if entry_hist
+                else (gw_data.get("value", 0) - gw_data.get("bank", 0)) / 10
+            ),
+            free_transfers=free_transfers,
+            chip_used=chip_map.get(completed_gw),
+            points=gw_data.get("points"),
+            total_points=gw_data.get("total_points"),
+            overall_rank=gw_data.get("overall_rank"),
+            transfers_in_json=json.dumps(t_in_list) if t_in_list else None,
+            transfers_out_json=json.dumps(t_out_list) if t_out_list else None,
+            captain_id=captain_id,
+            captain_name=captain_name,
+            transfers_cost=gw_data.get("event_transfers_cost", 0),
+        )
+
+        # ── 7. Compare to recommendation and save outcome ─────────────────
+        rec = self.recommendations.get_recommendation(season_id, completed_gw)
+        if rec:
+            actual_points = gw_data.get("points", 0)
+            recommended_points = rec.get("predicted_points", 0)
+            point_delta = round(
+                (actual_points or 0) - (recommended_points or 0), 1
+            )
+
+            # Check if captain was followed
+            followed_captain = (
+                1 if captain_id == rec.get("captain_id") else 0
+            )
+
+            # Check if transfers were followed
+            rec_transfers = json.loads(rec.get("transfers_json") or "[]")
+            rec_in_ids = {
+                t["in"]["player_id"]
+                for t in rec_transfers
+                if t.get("in", {}).get("player_id")
+            }
+            actual_squad_ids = {p["player_id"] for p in squad}
+            if not rec_in_ids:
+                # Recommendation was to bank FT -- only followed if 0 transfers
+                followed_transfers = 1 if not gw_transfers else 0
+            else:
+                followed_transfers = (
+                    1 if rec_in_ids.issubset(actual_squad_ids) else 0
+                )
+
+            # WC/FH squad comparison
+            rec_chip = rec.get("chip_suggestion")
+            rec_new_squad = rec.get("new_squad_json")
+            if rec_chip in ("wildcard", "freehit") and rec_new_squad:
+                try:
+                    rec_squad = json.loads(rec_new_squad)
+                    rec_squad_ids = {
+                        p["player_id"]
+                        for p in rec_squad
+                        if "player_id" in p
+                    }
+                    if rec_squad_ids:
+                        overlap = rec_squad_ids & actual_squad_ids
+                        followed_transfers = (
+                            1 if len(overlap) >= 13 else 0
+                        )
+                except (json.JSONDecodeError, TypeError, KeyError):
+                    pass
+
+            actual_chip = chip_map.get(completed_gw)
+            recommended_chip = rec.get("chip_suggestion")
+            followed_chip = 1 if actual_chip == recommended_chip else 0
+
+            self.outcomes.save_outcome(
+                season_id=season_id,
+                gameweek=completed_gw,
+                followed_transfers=followed_transfers,
+                followed_captain=followed_captain,
+                followed_chip=followed_chip,
+                recommended_points=recommended_points,
+                actual_points=actual_points,
+                point_delta=point_delta,
+            )
+
+            logger.info(
+                "GW%d outcome: actual=%s, recommended=%s, delta=%s, "
+                "followed_captain=%s, followed_transfers=%s",
+                completed_gw, actual_points, recommended_points,
+                point_delta, followed_captain, followed_transfers,
+            )
+
+        # ── 8. Update season and transition phase ─────────────────────────
+        self.seasons.update_season_gw(season_id, completed_gw)
+
+        if completed_gw >= 38:
+            self.seasons.update_phase(season_id, GWPhase.SEASON_OVER.value)
+            logger.info("GW38 complete — season over")
+            alerts.append({
+                "type": "season_over",
+                "message": "Season complete! All 38 gameweeks finished.",
+            })
+        else:
+            self.seasons.update_phase(season_id, GWPhase.PLANNING.value)
+            logger.info(
+                "GW%d recorded — transitioning to PLANNING for GW%d",
+                completed_gw, completed_gw + 1,
+            )
+
+        alerts.append({
+            "type": "gw_recorded",
+            "message": (
+                f"GW{completed_gw} results recorded"
+                f" — {gw_data.get('points', '?')} pts"
+                f" (total: {gw_data.get('total_points', '?')})"
+            ),
+            "gameweek": completed_gw,
+            "points": gw_data.get("points"),
+            "total_points": gw_data.get("total_points"),
+            "overall_rank": gw_data.get("overall_rank"),
+        })
+
+        return alerts
 
     # ------------------------------------------------------------------
     # Season initialisation

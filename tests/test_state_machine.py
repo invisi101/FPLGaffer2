@@ -1150,3 +1150,316 @@ class TestScheduler:
         """stop_scheduler() is safe to call when nothing is running."""
         from src.season import scheduler
         scheduler.stop_scheduler()  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# _tick_complete
+# ---------------------------------------------------------------------------
+
+def _make_mock_bootstrap():
+    """Bootstrap payload with enough data to record results."""
+    return {
+        "events": [
+            {"id": 25, "is_current": True, "is_next": False, "finished": True},
+            {"id": 26, "is_current": False, "is_next": True, "finished": False},
+        ],
+        "elements": [
+            {
+                "id": 1, "web_name": "Salah", "element_type": 3,
+                "team": 1, "now_cost": 130, "event_points": 8, "status": "a",
+            },
+            {
+                "id": 2, "web_name": "Haaland", "element_type": 4,
+                "team": 2, "now_cost": 140, "event_points": 6, "status": "a",
+            },
+            {
+                "id": 3, "web_name": "Saka", "element_type": 3,
+                "team": 3, "now_cost": 100, "event_points": 4, "status": "a",
+            },
+        ],
+        "teams": [
+            {"id": 1, "code": 14, "short_name": "LIV"},
+            {"id": 2, "code": 43, "short_name": "MCI"},
+            {"id": 3, "code": 3, "short_name": "ARS"},
+        ],
+    }
+
+
+def _make_mock_picks(gw=25):
+    """Picks response for the completed GW."""
+    return {
+        "picks": [
+            {"element": 1, "position": 6, "is_captain": True, "multiplier": 2},
+            {"element": 2, "position": 7, "is_captain": False, "multiplier": 1},
+            {"element": 3, "position": 12, "is_captain": False, "multiplier": 1},
+        ],
+        "entry_history": {
+            "event": gw,
+            "points": 65,
+            "total_points": 1200,
+            "overall_rank": 5000,
+            "bank": 50,  # 5.0m
+            "value": 1020,  # 102.0m
+            "event_transfers": 1,
+            "event_transfers_cost": 0,
+        },
+    }
+
+
+def _make_mock_history(gw=25):
+    """Manager history with one completed GW."""
+    return {
+        "current": [
+            {
+                "event": gw,
+                "points": 65,
+                "total_points": 1200,
+                "overall_rank": 5000,
+                "bank": 50,
+                "value": 1020,
+                "event_transfers": 1,
+                "event_transfers_cost": 0,
+            },
+        ],
+        "chips": [],
+    }
+
+
+def _make_mock_live_data():
+    """Live event data with per-player points."""
+    return {
+        "elements": [
+            {"id": 1, "stats": {"total_points": 8}},
+            {"id": 2, "stats": {"total_points": 6}},
+            {"id": 3, "stats": {"total_points": 4}},
+        ],
+    }
+
+
+class TestTickComplete:
+    """Tests for _tick_complete() — auto-record results on GW completion."""
+
+    @pytest.fixture
+    def db_path(self, tmp_path):
+        path = tmp_path / "test.db"
+        from src.db.connection import connect
+        with connect(path) as conn:
+            from src.db.schema import init_schema
+            from src.db.migrations import apply_migrations
+            init_schema(conn)
+            apply_migrations(conn)
+        return path
+
+    @pytest.fixture
+    def season_setup(self, db_path):
+        """Create a season in COMPLETE phase at GW25."""
+        from src.db.repositories import SeasonRepository
+        repo = SeasonRepository(db_path)
+        sid = repo.create_season(manager_id=123, season_name="2025-2026")
+        repo.update_phase(sid, "complete")
+        repo.update_season_gw(sid, 24)  # previous GW
+        return db_path, sid
+
+    def _patch_fpl_api(self, monkeypatch, gw=25, bootstrap=None, picks=None,
+                       history=None, live_data=None, transfers=None):
+        """Patch all FPL API calls used by _tick_complete.
+
+        Since _tick_complete uses lazy imports from src.data.fpl_api,
+        we patch at the source module level.
+        """
+        bs = bootstrap or _make_mock_bootstrap()
+        pk = picks or _make_mock_picks(gw)
+        hist = history or _make_mock_history(gw)
+        live = live_data or _make_mock_live_data()
+        xfers = transfers if transfers is not None else []
+
+        monkeypatch.setattr(
+            "src.data.fpl_api.fetch_fpl_api",
+            lambda *a, **kw: bs,
+        )
+        monkeypatch.setattr(
+            "src.data.fpl_api.fetch_manager_picks",
+            lambda mid, ev: pk,
+        )
+        monkeypatch.setattr(
+            "src.data.fpl_api.fetch_manager_history",
+            lambda mid: hist,
+        )
+        monkeypatch.setattr(
+            "src.data.fpl_api.fetch_event_live",
+            lambda ev, force=True: live,
+        )
+        monkeypatch.setattr(
+            "src.data.fpl_api.fetch_manager_transfers",
+            lambda mid: xfers,
+        )
+
+    def test_tick_complete_records_results(self, season_setup, monkeypatch):
+        """Full happy path: snapshot saved, outcome saved, phase transitions."""
+        db_path, sid = season_setup
+        from src.season.manager_v2 import SeasonManagerV2
+        from src.db.repositories import (
+            RecommendationRepository, SnapshotRepository,
+            OutcomeRepository, SeasonRepository,
+        )
+
+        # Save a recommendation for GW25 so outcome comparison happens
+        RecommendationRepository(db_path).save_recommendation(
+            season_id=sid, gameweek=25,
+            captain_id=1, captain_name="Salah",
+            predicted_points=55.0,
+            transfers_json="[]",
+        )
+
+        self._patch_fpl_api(monkeypatch)
+
+        mgr = SeasonManagerV2(db_path=db_path)
+
+        status = {
+            "active": True,
+            "phase": "complete",
+            "gw": 26,
+            "current_gw": 25,
+            "season_id": sid,
+            "manager_id": 123,
+        }
+        season = SeasonRepository(db_path).get_season(123)
+
+        alerts = mgr._tick_complete(123, season, status)
+
+        # Verify alerts
+        gw_recorded = [a for a in alerts if a["type"] == "gw_recorded"]
+        assert len(gw_recorded) == 1
+        assert gw_recorded[0]["gameweek"] == 25
+        assert gw_recorded[0]["points"] == 65
+
+        # Verify snapshot was saved
+        snapshot = SnapshotRepository(db_path).get_snapshot(sid, 25)
+        assert snapshot is not None
+        assert snapshot["points"] == 65
+        assert snapshot["total_points"] == 1200
+        assert snapshot["captain_id"] == 1
+        assert snapshot["captain_name"] == "Salah"
+
+        # Verify outcome was saved (recommendation existed)
+        outcomes = OutcomeRepository(db_path).get_outcomes(sid)
+        assert len(outcomes) == 1
+        assert outcomes[0]["actual_points"] == 65
+        assert outcomes[0]["recommended_points"] == 55.0
+        assert outcomes[0]["point_delta"] == 10.0
+        # Captain was followed (both rec and actual = player 1)
+        assert outcomes[0]["followed_captain"] == 1
+
+        # Verify season current_gw updated
+        updated_season = SeasonRepository(db_path).get_season(123)
+        assert updated_season["current_gw"] == 25
+
+        # Verify phase transitioned to PLANNING
+        assert updated_season["phase"] == "planning"
+
+    def test_tick_complete_season_over_at_gw38(self, db_path, monkeypatch):
+        """When current_gw is 38, phase transitions to SEASON_OVER."""
+        from src.season.manager_v2 import SeasonManagerV2
+        from src.db.repositories import SeasonRepository
+
+        repo = SeasonRepository(db_path)
+        sid = repo.create_season(manager_id=123, season_name="2025-2026")
+        repo.update_phase(sid, "complete")
+        repo.update_season_gw(sid, 37)
+
+        # Adjust mocks for GW38
+        bootstrap = _make_mock_bootstrap()
+        picks = _make_mock_picks(38)
+        history = _make_mock_history(38)
+
+        self._patch_fpl_api(monkeypatch, gw=38, bootstrap=bootstrap,
+                            picks=picks, history=history)
+
+        mgr = SeasonManagerV2(db_path=db_path)
+        status = {
+            "active": True,
+            "phase": "complete",
+            "gw": None,  # no next GW after 38
+            "current_gw": 38,
+            "season_id": sid,
+            "manager_id": 123,
+        }
+        season = repo.get_season(123)
+
+        alerts = mgr._tick_complete(123, season, status)
+
+        # Should have both season_over and gw_recorded alerts
+        types = {a["type"] for a in alerts}
+        assert "season_over" in types
+        assert "gw_recorded" in types
+
+        # Phase should be season_over
+        updated = repo.get_season(123)
+        assert updated["phase"] == "season_over"
+
+    def test_tick_complete_no_recommendation_still_records(self, season_setup, monkeypatch):
+        """Without a recommendation, snapshot is saved but no outcome."""
+        db_path, sid = season_setup
+        from src.season.manager_v2 import SeasonManagerV2
+        from src.db.repositories import (
+            SnapshotRepository, OutcomeRepository, SeasonRepository,
+        )
+
+        # No recommendation saved — outcome comparison should be skipped.
+        self._patch_fpl_api(monkeypatch)
+
+        mgr = SeasonManagerV2(db_path=db_path)
+        status = {
+            "active": True,
+            "phase": "complete",
+            "gw": 26,
+            "current_gw": 25,
+            "season_id": sid,
+            "manager_id": 123,
+        }
+        season = SeasonRepository(db_path).get_season(123)
+
+        alerts = mgr._tick_complete(123, season, status)
+
+        # Snapshot should still be saved
+        snapshot = SnapshotRepository(db_path).get_snapshot(sid, 25)
+        assert snapshot is not None
+        assert snapshot["points"] == 65
+
+        # No outcome should exist
+        outcomes = OutcomeRepository(db_path).get_outcomes(sid)
+        assert len(outcomes) == 0
+
+        # gw_recorded alert should still be present
+        gw_recorded = [a for a in alerts if a["type"] == "gw_recorded"]
+        assert len(gw_recorded) == 1
+
+    def test_tick_complete_handles_api_failure(self, season_setup, monkeypatch):
+        """If FPL API fails, returns error alert without crashing."""
+        db_path, sid = season_setup
+        from src.season.manager_v2 import SeasonManagerV2
+        from src.db.repositories import SeasonRepository
+
+        # Make bootstrap fetch fail
+        monkeypatch.setattr(
+            "src.data.fpl_api.fetch_fpl_api",
+            lambda *a, **kw: (_ for _ in ()).throw(ConnectionError("API down")),
+        )
+
+        mgr = SeasonManagerV2(db_path=db_path)
+        status = {
+            "active": True,
+            "phase": "complete",
+            "gw": 26,
+            "current_gw": 25,
+            "season_id": sid,
+            "manager_id": 123,
+        }
+        season = SeasonRepository(db_path).get_season(123)
+
+        alerts = mgr._tick_complete(123, season, status)
+
+        # Should return an error alert, not crash
+        assert len(alerts) == 1
+        assert alerts[0]["type"] == "error"
+        assert "GW25" in alerts[0]["message"]
