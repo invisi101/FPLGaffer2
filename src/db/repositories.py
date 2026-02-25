@@ -451,29 +451,6 @@ class FixtureRepository:
 
 
 # ---------------------------------------------------------------------------
-# PlanRepository (stub — kept for old manager.py compatibility until removal)
-# ---------------------------------------------------------------------------
-
-class PlanRepository:
-    """Stub — strategic_plan and plan_changelog tables are removed in v2."""
-
-    def __init__(self, db_path: Path | None = None):
-        self.db_path = db_path or DB_PATH
-
-    def save_strategic_plan(self, *args, **kwargs) -> None:
-        pass
-
-    def get_strategic_plan(self, *args, **kwargs) -> dict | None:
-        return None
-
-    def save_plan_change(self, *args, **kwargs) -> None:
-        pass
-
-    def get_plan_changelog(self, *args, **kwargs) -> list[dict]:
-        return []
-
-
-# ---------------------------------------------------------------------------
 # DashboardRepository
 # ---------------------------------------------------------------------------
 

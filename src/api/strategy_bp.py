@@ -14,9 +14,9 @@ strategy_bp = Blueprint("strategy", __name__)
 
 
 def _get_mgr():
-    from src.season.manager_v2 import SeasonManagerV2
+    from src.season.manager import SeasonManager
     if not hasattr(_get_mgr, "_mgr"):
-        _get_mgr._mgr = SeasonManagerV2()
+        _get_mgr._mgr = SeasonManager()
     return _get_mgr._mgr
 
 

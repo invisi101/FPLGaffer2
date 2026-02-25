@@ -19,7 +19,7 @@ def start_scheduler(
 ) -> None:
     """Start the background tick loop.
 
-    Calls ``SeasonManagerV2.tick()`` every *interval_seconds* (default 5 min).
+    Calls ``SeasonManager.tick()`` every *interval_seconds* (default 5 min).
     The thread is a daemon so it dies with the process.
     """
     global _scheduler_thread
@@ -30,9 +30,9 @@ def start_scheduler(
 
     def _loop() -> None:
         from src.api.sse import broadcast
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         while not _stop_event.is_set():
             try:
                 alerts = mgr.tick(manager_id)

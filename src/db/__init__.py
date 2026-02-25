@@ -7,7 +7,6 @@ from src.db.repositories import (
     FixtureRepository,
     OutcomeRepository,
     PlannedSquadRepository,
-    PlanRepository,
     PriceRepository,
     RecommendationRepository,
     SeasonRepository,
@@ -30,7 +29,6 @@ __all__ = [
     "PriceRepository",
     "FixtureRepository",
     "DashboardRepository",
-    "PlanRepository",
     "PlannedSquadRepository",
     "WatchlistRepository",
 ]

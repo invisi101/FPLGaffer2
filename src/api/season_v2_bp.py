@@ -14,10 +14,10 @@ season_v2_bp = Blueprint("season_v2", __name__)
 
 
 def _get_mgr():
-    """Lazy-init SeasonManagerV2 singleton."""
-    from src.season.manager_v2 import SeasonManagerV2
+    """Lazy-init SeasonManager singleton."""
+    from src.season.manager import SeasonManager
     if not hasattr(_get_mgr, "_mgr"):
-        _get_mgr._mgr = SeasonManagerV2()
+        _get_mgr._mgr = SeasonManager()
     return _get_mgr._mgr
 
 

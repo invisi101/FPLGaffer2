@@ -253,10 +253,10 @@ class TestSeasonPhase:
 
 
 # ---------------------------------------------------------------------------
-# SeasonManagerV2
+# SeasonManager
 # ---------------------------------------------------------------------------
 
-class TestSeasonManagerV2:
+class TestSeasonManager:
     """Tests for the v2 state-machine-driven season manager."""
 
     @pytest.fixture
@@ -315,8 +315,8 @@ class TestSeasonManagerV2:
         ]
 
     def test_init_creates_repos(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         assert mgr.seasons is not None
         assert mgr.planned_squads is not None
         assert mgr.recommendations is not None
@@ -328,28 +328,28 @@ class TestSeasonManagerV2:
         assert mgr.watchlist is not None
 
     def test_get_status_no_season(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         status = mgr.get_status(manager_id=99999)
         assert status["active"] is False
         assert status["phase"] is None
 
     def test_get_status_with_season(self, db_path, bootstrap, monkeypatch):
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
 
         SeasonRepository(db_path).create_season(manager_id=123, season_name="2025-2026")
 
         # Mock bootstrap and fixtures so we don't need real cache.
         monkeypatch.setattr(
-            "src.season.manager_v2.load_bootstrap", lambda: bootstrap
+            "src.season.manager.load_bootstrap", lambda: bootstrap
         )
         monkeypatch.setattr(
-            "src.season.manager_v2.get_next_gw",
+            "src.season.manager.get_next_gw",
             lambda bs: 26,
         )
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         # Mock fixture loading to return empty (GW25 not finished).
         monkeypatch.setattr(mgr, "_load_fixtures", lambda: [])
 
@@ -363,17 +363,17 @@ class TestSeasonManagerV2:
 
     def test_get_status_detects_planning_phase(self, db_path, bootstrap, monkeypatch):
         """No recommendation and deadline not passed -> PLANNING."""
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
 
         SeasonRepository(db_path).create_season(manager_id=123, season_name="2025-2026")
 
         # Set deadline far in the future.
         bootstrap["events"][1]["deadline_time"] = "2099-12-31T23:59:59Z"
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: bootstrap)
-        monkeypatch.setattr("src.season.manager_v2.get_next_gw", lambda bs: 26)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: bootstrap)
+        monkeypatch.setattr("src.season.manager.get_next_gw", lambda bs: 26)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         monkeypatch.setattr(mgr, "_load_fixtures", lambda: [])
 
         status = mgr.get_status(manager_id=123)
@@ -382,7 +382,7 @@ class TestSeasonManagerV2:
 
     def test_get_status_detects_ready_phase(self, db_path, bootstrap, monkeypatch):
         """Has recommendation, deadline not passed -> READY."""
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository, RecommendationRepository
 
         sid = SeasonRepository(db_path).create_season(manager_id=123, season_name="2025-2026")
@@ -391,10 +391,10 @@ class TestSeasonManagerV2:
         )
 
         bootstrap["events"][1]["deadline_time"] = "2099-12-31T23:59:59Z"
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: bootstrap)
-        monkeypatch.setattr("src.season.manager_v2.get_next_gw", lambda bs: 26)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: bootstrap)
+        monkeypatch.setattr("src.season.manager.get_next_gw", lambda bs: 26)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         monkeypatch.setattr(mgr, "_load_fixtures", lambda: [])
 
         status = mgr.get_status(manager_id=123)
@@ -402,27 +402,27 @@ class TestSeasonManagerV2:
         assert status["has_recommendation"] is True
 
     def test_tick_no_season_returns_empty(self, db_path, monkeypatch):
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
 
         # Mock bootstrap so get_status works without cache.
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: None)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: None)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         alerts = mgr.tick(manager_id=99999)
         assert alerts == []
 
     def test_tick_planning_dispatches(self, db_path, bootstrap, monkeypatch):
         """PLANNING tick dispatches to _tick_planning and returns its alerts."""
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
 
         SeasonRepository(db_path).create_season(manager_id=123, season_name="2025-2026")
 
         bootstrap["events"][1]["deadline_time"] = "2099-12-31T23:59:59Z"
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: bootstrap)
-        monkeypatch.setattr("src.season.manager_v2.get_next_gw", lambda bs: 26)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: bootstrap)
+        monkeypatch.setattr("src.season.manager.get_next_gw", lambda bs: 26)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         monkeypatch.setattr(mgr, "_load_fixtures", lambda: [])
 
         # Mock _tick_planning to verify dispatch without running full pipeline
@@ -434,7 +434,7 @@ class TestSeasonManagerV2:
 
     def test_tick_ready_detects_injury(self, db_path, bootstrap, monkeypatch):
         """READY tick detects an injured captain and returns a critical alert."""
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository, RecommendationRepository, PlannedSquadRepository
 
         sid = SeasonRepository(db_path).create_season(manager_id=123, season_name="2025-2026")
@@ -455,10 +455,10 @@ class TestSeasonManagerV2:
 
         # Saka is injured in bootstrap (status "i", element id 3).
         bootstrap["events"][1]["deadline_time"] = "2099-12-31T23:59:59Z"
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: bootstrap)
-        monkeypatch.setattr("src.season.manager_v2.get_next_gw", lambda bs: 26)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: bootstrap)
+        monkeypatch.setattr("src.season.manager.get_next_gw", lambda bs: 26)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         monkeypatch.setattr(mgr, "_load_fixtures", lambda: [])
 
         alerts = mgr.tick(manager_id=123)
@@ -472,7 +472,7 @@ class TestSeasonManagerV2:
 
     def test_tick_ready_no_alert_when_healthy(self, db_path, bootstrap, monkeypatch):
         """READY tick returns no alerts when all planned players are available."""
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository, RecommendationRepository, PlannedSquadRepository
 
         sid = SeasonRepository(db_path).create_season(manager_id=123, season_name="2025-2026")
@@ -491,10 +491,10 @@ class TestSeasonManagerV2:
         )
 
         bootstrap["events"][1]["deadline_time"] = "2099-12-31T23:59:59Z"
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: bootstrap)
-        monkeypatch.setattr("src.season.manager_v2.get_next_gw", lambda bs: 26)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: bootstrap)
+        monkeypatch.setattr("src.season.manager.get_next_gw", lambda bs: 26)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         monkeypatch.setattr(mgr, "_load_fixtures", lambda: [])
 
         alerts = mgr.tick(manager_id=123)
@@ -502,7 +502,7 @@ class TestSeasonManagerV2:
 
     def test_tick_live_detects_gw_complete(self, db_path, bootstrap, fixtures_gw25_finished, monkeypatch):
         """LIVE tick transitions to COMPLETE when all fixtures are finished."""
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository, RecommendationRepository
 
         sid = SeasonRepository(db_path).create_season(manager_id=123, season_name="2025-2026")
@@ -513,10 +513,10 @@ class TestSeasonManagerV2:
 
         # Deadline in the past -> LIVE phase.
         bootstrap["events"][1]["deadline_time"] = "2020-01-01T00:00:00Z"
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: bootstrap)
-        monkeypatch.setattr("src.season.manager_v2.get_next_gw", lambda bs: 26)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: bootstrap)
+        monkeypatch.setattr("src.season.manager.get_next_gw", lambda bs: 26)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         # GW25 fixtures all finished -> detect_phase returns COMPLETE,
         # but the LIVE tick logic also checks _is_gw_finished.
         monkeypatch.setattr(mgr, "_load_fixtures", lambda: fixtures_gw25_finished)
@@ -526,8 +526,8 @@ class TestSeasonManagerV2:
         assert status["phase"] == "complete"
 
     def test_is_gw_finished_true(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         mgr._load_fixtures = lambda: [
             {"event": 10, "finished": True},
             {"event": 10, "finished": True},
@@ -535,8 +535,8 @@ class TestSeasonManagerV2:
         assert mgr._is_gw_finished(10) is True
 
     def test_is_gw_finished_false(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         mgr._load_fixtures = lambda: [
             {"event": 10, "finished": True},
             {"event": 10, "finished": False},
@@ -544,15 +544,15 @@ class TestSeasonManagerV2:
         assert mgr._is_gw_finished(10) is False
 
     def test_is_gw_finished_no_fixtures(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         mgr._load_fixtures = lambda: []
         assert mgr._is_gw_finished(10) is False
 
     def test_get_deadline_parses_iso(self, db_path, bootstrap):
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from datetime import datetime, timezone
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         dl = mgr._get_deadline(bootstrap, 26)
         assert dl is not None
         assert dl.tzinfo is not None
@@ -561,13 +561,13 @@ class TestSeasonManagerV2:
         assert dl.day == 28
 
     def test_get_deadline_returns_none_for_missing_gw(self, db_path, bootstrap):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         assert mgr._get_deadline(bootstrap, 99) is None
 
     def test_get_deadline_returns_none_for_none_bootstrap(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         assert mgr._get_deadline(None, 26) is None
 
 
@@ -615,7 +615,7 @@ def _make_test_squad_json(players=None):
 
 
 class TestUserActions:
-    """Tests for user action methods on SeasonManagerV2."""
+    """Tests for user action methods on SeasonManager."""
 
     @pytest.fixture
     def db_path(self, tmp_path):
@@ -654,12 +654,12 @@ class TestUserActions:
 
     @pytest.fixture
     def mgr(self, setup, monkeypatch):
-        """A SeasonManagerV2 configured for testing (bootstrap mocked)."""
+        """A SeasonManager configured for testing (bootstrap mocked)."""
         db_path, sid = setup
-        from src.season.manager_v2 import SeasonManagerV2
-        m = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        m = SeasonManager(db_path=db_path)
         # Mock bootstrap so _get_next_gw_for_season works without cache.
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: None)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: None)
         # Patch the season's current_gw so fallback logic returns GW 10.
         from src.db.repositories import SeasonRepository
         SeasonRepository(db_path).update_season_gw(sid, 9)
@@ -668,27 +668,27 @@ class TestUserActions:
     # ---- _require_ready_phase ----
 
     def test_require_ready_phase_no_season(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         _, err = mgr._require_ready_phase(99999)
         assert err is not None
         assert "No active season" in err["error"]
 
     def test_require_ready_phase_wrong_phase(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
         repo = SeasonRepository(db_path)
         sid = repo.create_season(manager_id=777, season_name="2025-2026")
         # Phase defaults to "planning", not "ready".
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         _, err = mgr._require_ready_phase(777)
         assert err is not None
         assert "READY phase" in err["error"]
 
     def test_require_ready_phase_ok(self, setup):
         db_path, sid = setup
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         season, err = mgr._require_ready_phase(123)
         assert err is None
         assert season is not None
@@ -697,8 +697,8 @@ class TestUserActions:
     # ---- _calculate_predicted_points ----
 
     def test_calculate_predicted_points_normal(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         squad_json = _make_test_squad_json()
         # Captain (player 114, idx 14) has predicted_next_gw_points = 4.0 + 14*0.3 = 8.2
         # Starters are idx 0-10 (players 100-110), captain is 114 (idx 14, not a starter!)
@@ -717,8 +717,8 @@ class TestUserActions:
         assert pts == 67.5
 
     def test_calculate_predicted_points_triple_captain(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         squad_json = _make_test_squad_json()
         squad_json["chip"] = "3xc"
         squad_json["captain_id"] = 110
@@ -730,8 +730,8 @@ class TestUserActions:
         assert pts == 74.5
 
     def test_calculate_predicted_points_bench_boost(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         squad_json = _make_test_squad_json()
         squad_json["chip"] = "bboost"
         squad_json["captain_id"] = 110
@@ -753,18 +753,18 @@ class TestUserActions:
 
     def test_accept_transfers_wrong_phase(self, db_path):
         """Accepting transfers when not in READY phase returns error."""
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
         repo = SeasonRepository(db_path)
         repo.create_season(manager_id=888, season_name="2025-2026")
         # Phase is "planning" by default.
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         result = mgr.accept_transfers(888)
         assert "error" in result
 
     def test_accept_transfers_no_planned_squad(self, db_path):
         """Accepting with no planned squad returns error."""
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
         repo = SeasonRepository(db_path)
         sid = repo.create_season(manager_id=889, season_name="2025-2026")
@@ -772,9 +772,9 @@ class TestUserActions:
         repo.update_season_gw = lambda *a: None  # no-op
         from src.db.repositories import SeasonRepository as SR2
         SR2(db_path).update_season_gw(sid, 9)
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         # Mock bootstrap to None so fallback GW logic works.
-        import src.season.manager_v2 as mod
+        import src.season.manager as mod
         original = mod.load_bootstrap
         mod.load_bootstrap = lambda: None
         try:
@@ -851,18 +851,18 @@ class TestUserActions:
     def test_lock_chip_already_used(self, setup):
         """Locking a chip that was already used returns error."""
         db_path, sid = setup
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SnapshotRepository, SeasonRepository
         # Record a snapshot where bboost was used in GW5.
         SnapshotRepository(db_path).save_gw_snapshot(
             season_id=sid, gameweek=5, chip_used="bboost",
         )
         SeasonRepository(db_path).update_season_gw(sid, 9)
-        import src.season.manager_v2 as mod
+        import src.season.manager as mod
         original = mod.load_bootstrap
         mod.load_bootstrap = lambda: None
         try:
-            mgr = SeasonManagerV2(db_path=db_path)
+            mgr = SeasonManager(db_path=db_path)
             result = mgr.lock_chip(123, "bboost")
             assert "error" in result
             assert "already used" in result["error"]
@@ -907,7 +907,7 @@ class TestUserActions:
         assert result["planned_squad"]["transfers_in"] == []
 
     def test_undo_transfers_no_recommendation(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository, PlannedSquadRepository
         repo = SeasonRepository(db_path)
         sid = repo.create_season(manager_id=890, season_name="2025-2026")
@@ -917,11 +917,11 @@ class TestUserActions:
         PlannedSquadRepository(db_path).save_planned_squad(
             sid, 10, _make_test_squad_json(), "user_override",
         )
-        import src.season.manager_v2 as mod
+        import src.season.manager as mod
         original = mod.load_bootstrap
         mod.load_bootstrap = lambda: None
         try:
-            mgr = SeasonManagerV2(db_path=db_path)
+            mgr = SeasonManager(db_path=db_path)
             result = mgr.undo_transfers(890)
             assert "error" in result
         finally:
@@ -932,7 +932,7 @@ class TestUserActions:
     def test_make_transfer_basic(self, setup, monkeypatch):
         """Swap two players of the same position."""
         db_path, sid = setup
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
         SeasonRepository(db_path).update_season_gw(sid, 9)
 
@@ -950,9 +950,9 @@ class TestUserActions:
                 },
             ],
         }
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: bootstrap)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: bootstrap)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         # Player 107 is idx 7 = MID (positions: GKP*2, DEF*5, MID*5 -> idx 7 is MID).
         result = mgr.make_transfer(123, player_out_id=107, player_in_id=200)
         assert result.get("status") == "transfer_made"
@@ -969,7 +969,7 @@ class TestUserActions:
 
     def test_make_transfer_position_mismatch(self, setup, monkeypatch):
         db_path, sid = setup
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
         SeasonRepository(db_path).update_season_gw(sid, 9)
 
@@ -980,9 +980,9 @@ class TestUserActions:
                 {"id": 200, "web_name": "NewFWD", "element_type": 4, "now_cost": 60, "team": 8},
             ],
         }
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: bootstrap)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: bootstrap)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         # Player 107 is MID, 200 is FWD -> position mismatch.
         result = mgr.make_transfer(123, player_out_id=107, player_in_id=200)
         assert "error" in result
@@ -990,7 +990,7 @@ class TestUserActions:
 
     def test_make_transfer_budget_exceeded(self, setup, monkeypatch):
         db_path, sid = setup
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
         SeasonRepository(db_path).update_season_gw(sid, 9)
 
@@ -1004,9 +1004,9 @@ class TestUserActions:
                 },
             ],
         }
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: bootstrap)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: bootstrap)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         # Player 107 cost = 5.0 + 7*0.5 = 8.5m, bank = 5.0m.
         # Available = 8.5 + 5.0 = 13.5m. Incoming costs 20.0m -> over budget.
         result = mgr.make_transfer(123, player_out_id=107, player_in_id=200)
@@ -1016,7 +1016,7 @@ class TestUserActions:
     def test_make_transfer_team_limit(self, setup, monkeypatch):
         """Cannot have more than 3 players from the same team."""
         db_path, sid = setup
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository, PlannedSquadRepository
         SeasonRepository(db_path).update_season_gw(sid, 9)
 
@@ -1037,9 +1037,9 @@ class TestUserActions:
                 },
             ],
         }
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: bootstrap)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: bootstrap)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         # Player 107 (idx 7, team_code = 8 from 7%10+1=8) is MID.
         # After removing 107 (team 8), we still have 3 from team 8 (idx 2,3,4).
         result = mgr.make_transfer(123, player_out_id=107, player_in_id=200)
@@ -1048,12 +1048,12 @@ class TestUserActions:
 
     def test_make_transfer_player_not_in_squad(self, setup, monkeypatch):
         db_path, sid = setup
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
         SeasonRepository(db_path).update_season_gw(sid, 9)
 
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: None)
-        mgr = SeasonManagerV2(db_path=db_path)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: None)
+        mgr = SeasonManager(db_path=db_path)
         result = mgr.make_transfer(123, player_out_id=999, player_in_id=200)
         assert "error" in result
         assert "not in the squad" in result["error"]
@@ -1061,7 +1061,7 @@ class TestUserActions:
     def test_make_transfer_tracks_hits(self, setup, monkeypatch):
         """Second transfer incurs a hit (only 1 free transfer)."""
         db_path, sid = setup
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
         SeasonRepository(db_path).update_season_gw(sid, 9)
 
@@ -1073,9 +1073,9 @@ class TestUserActions:
                 {"id": 201, "web_name": "NewMID2", "element_type": 3, "now_cost": 60, "team": 16},
             ],
         }
-        monkeypatch.setattr("src.season.manager_v2.load_bootstrap", lambda: bootstrap)
+        monkeypatch.setattr("src.season.manager.load_bootstrap", lambda: bootstrap)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         # First transfer (free).
         r1 = mgr.make_transfer(123, player_out_id=107, player_in_id=200)
         assert r1.get("status") == "transfer_made"
@@ -1104,14 +1104,14 @@ class TestInitSeason:
         return path
 
     def test_init_season_method_exists(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         assert hasattr(mgr, "init_season")
         assert callable(mgr.init_season)
 
     def test_track_prices_simple_method_exists(self, db_path):
-        from src.season.manager_v2 import SeasonManagerV2
-        mgr = SeasonManagerV2(db_path=db_path)
+        from src.season.manager import SeasonManager
+        mgr = SeasonManager(db_path=db_path)
         assert hasattr(mgr, "_track_prices_simple")
         assert callable(mgr._track_prices_simple)
 
@@ -1265,10 +1265,10 @@ class TestTickLive:
     def test_tick_live_transitions_when_all_finished(self, live_setup, monkeypatch):
         """_tick_live transitions to COMPLETE and returns gw_complete alert."""
         db_path, sid = live_setup
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         monkeypatch.setattr(mgr, "_is_gw_finished", lambda gw: True)
 
         status = {
@@ -1288,10 +1288,10 @@ class TestTickLive:
     def test_tick_live_no_transition_when_fixtures_pending(self, live_setup, monkeypatch):
         """_tick_live returns empty alerts when fixtures are still in progress."""
         db_path, sid = live_setup
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         monkeypatch.setattr(mgr, "_is_gw_finished", lambda gw: False)
 
         status = {
@@ -1368,7 +1368,7 @@ class TestTickComplete:
     def test_tick_complete_records_results(self, season_setup, monkeypatch):
         """Full happy path: snapshot saved, outcome saved, phase transitions."""
         db_path, sid = season_setup
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import (
             RecommendationRepository, SnapshotRepository,
             OutcomeRepository, SeasonRepository,
@@ -1384,7 +1384,7 @@ class TestTickComplete:
 
         self._patch_fpl_api(monkeypatch)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
 
         status = {
             "active": True,
@@ -1430,7 +1430,7 @@ class TestTickComplete:
 
     def test_tick_complete_season_over_at_gw38(self, db_path, monkeypatch):
         """When current_gw is 38, phase transitions to SEASON_OVER."""
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
 
         repo = SeasonRepository(db_path)
@@ -1446,7 +1446,7 @@ class TestTickComplete:
         self._patch_fpl_api(monkeypatch, gw=38, bootstrap=bootstrap,
                             picks=picks, history=history)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         status = {
             "active": True,
             "phase": "complete",
@@ -1471,7 +1471,7 @@ class TestTickComplete:
     def test_tick_complete_no_recommendation_still_records(self, season_setup, monkeypatch):
         """Without a recommendation, snapshot is saved but no outcome."""
         db_path, sid = season_setup
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import (
             SnapshotRepository, OutcomeRepository, SeasonRepository,
         )
@@ -1479,7 +1479,7 @@ class TestTickComplete:
         # No recommendation saved — outcome comparison should be skipped.
         self._patch_fpl_api(monkeypatch)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         status = {
             "active": True,
             "phase": "complete",
@@ -1508,7 +1508,7 @@ class TestTickComplete:
     def test_tick_complete_handles_api_failure(self, season_setup, monkeypatch):
         """If FPL API fails, returns error alert without crashing."""
         db_path, sid = season_setup
-        from src.season.manager_v2 import SeasonManagerV2
+        from src.season.manager import SeasonManager
         from src.db.repositories import SeasonRepository
 
         # Make bootstrap fetch fail
@@ -1517,7 +1517,7 @@ class TestTickComplete:
 
         monkeypatch.setattr("src.data.fpl_api.fetch_fpl_api", _raise)
 
-        mgr = SeasonManagerV2(db_path=db_path)
+        mgr = SeasonManager(db_path=db_path)
         status = {
             "active": True,
             "phase": "complete",
