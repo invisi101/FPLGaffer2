@@ -6,13 +6,14 @@ Build a fully autonomous FPL manager. This is NOT just a prediction tool — it 
 
 - **Transfer planning**: Rolling 5-GW horizon with FT banking, price awareness, and fixture swings
 - **Squad building**: Shape the squad toward upcoming fixture runs, not just next GW
-- **Captain planning**: Joint captain optimization in the MILP solver + pre-planned captaincy calendar
-- **Chip strategy**: Evaluate all 4 chips across every remaining GW using DGW/BGW awareness, squad-specific predictions, and chip synergies (WC->BB, FH+WC)
+- **Captain planning**: Joint captain optimization in the MILP solver
+- **Chip decisions**: User-controlled — the app surfaces predictions but the manager decides when to play chips
 - **Price awareness**: Ownership-based price change predictions with probability scores
-- **Reactive adjustments**: Auto-detect injuries, fixture changes, and prediction shifts that invalidate the plan — with SSE-driven alerts and one-click replan
-- **Outcome tracking**: Record what was recommended vs what happened, track model accuracy over time
+- **Reactive adjustments**: Auto-detect injuries in planned squad — SSE-driven alerts during READY phase
+- **Outcome tracking**: Auto-record what was recommended vs what happened after each GW, track model accuracy over time
+- **State machine autopilot**: Background scheduler ticks through PLANNING → READY → LIVE → COMPLETE each GW
 
-Every decision (transfer, captain, bench order, chip) is made in context of the bigger picture. The app produces a rolling multi-week plan that constantly recalculates as new information comes in.
+The app runs on a GW state machine. Each gameweek cycles through phases automatically: generate recommendation (PLANNING), let the user review/override transfers and captain (READY), monitor live fixtures (LIVE), record results (COMPLETE). The user interacts primarily during the READY phase.
 
 ## Repos
 
@@ -44,7 +45,7 @@ When running a full audit:
 - **Python**: Use `.venv/bin/python`, NOT system `python3` (system Python lacks project dependencies)
 - **Run server**: `FLASK_APP=src.api .venv/bin/python -m flask run --port 9876` (serves on `http://127.0.0.1:9876`)
 - **Port 9876**: Often has leftover processes from previous sessions. Kill with `lsof -ti:9876 | xargs kill -9` before starting
-- **Tests**: `.venv/bin/python -m pytest tests/ -v` (103 tests across 3 files)
+- **Tests**: `.venv/bin/python -m pytest tests/ -v` (176 tests across 4 files)
 - **No build step**: Frontend is a single file at `src/templates/index.html` (inline CSS + JS). Just edit and refresh.
 - **Flush the cache**: When told to flush/clear the cache, delete ALL of the following for a complete clean slate:
   - `cache/*` — cached FPL API + GitHub CSV data
@@ -72,12 +73,13 @@ src/
 ├── paths.py                 # PyInstaller-aware path resolution
 ├── logging_config.py        # Centralized logging
 │
-├── api/                     # Flask blueprints (7 blueprints, 45+ endpoints)
-│   ├── __init__.py          # create_app() factory, blueprint registration
+├── api/                     # Flask blueprints (8 blueprints, 58 endpoints)
+│   ├── __init__.py          # create_app() factory, blueprint registration, scheduler startup
 │   ├── core.py              # Predictions, training, status, monsters, PL table
 │   ├── team.py              # Best team, my team, transfer recommendations
 │   ├── season_bp.py         # Season init, dashboard, recommendations, snapshots
-│   ├── strategy_bp.py       # Strategic plan, action plan, plan health, preseason
+│   ├── season_v2_bp.py      # V2 state-machine endpoints (tick, user actions, status)
+│   ├── strategy_bp.py       # Action plan, outcomes, preseason (simplified)
 │   ├── prices_bp.py         # Prices, predictions, history, watchlist
 │   ├── backtest_bp.py       # Walk-forward backtesting
 │   ├── compare_bp.py        # GW compare (actual vs hindsight-best)
@@ -125,20 +127,17 @@ src/
 │   ├── player.py            # Player data schemas
 │   └── prediction.py        # Prediction output schemas
 │
-├── strategy/                # Strategic planning brain
-│   ├── chip_evaluator.py    # Evaluate all 4 chips across remaining GWs
-│   ├── transfer_planner.py  # Multi-week rolling transfer planner
-│   ├── captain_planner.py   # Captain optimization across horizon
-│   ├── plan_synthesizer.py  # Combine into coherent plan + changelog
-│   ├── reactive.py          # Detect plan invalidation (injuries, fixtures)
+├── strategy/                # Transfer planning + availability
+│   ├── transfer_planner.py  # Multi-week rolling transfer planner (5-GW horizon)
+│   ├── reactive.py          # Injury checking + availability adjustments (simplified)
 │   └── price_tracker.py     # Price alerts, ownership-based predictions
 │
-├── season/                  # Season orchestration
-│   ├── manager.py           # SeasonManager class — the central orchestrator
+├── season/                  # Season orchestration (state-machine-driven)
+│   ├── manager.py           # SeasonManager — state-machine GW lifecycle orchestrator
+│   ├── state_machine.py     # GWPhase enum, transitions, phase detection
+│   ├── scheduler.py         # Background daemon thread (tick every 5 min)
 │   ├── dashboard.py         # Dashboard data aggregation
-│   ├── recorder.py          # Record actual results, compare to recommendation
-│   ├── fixtures.py          # Fixture calendar builder
-│   └── preseason.py         # Pre-GW1 squad selection + chip plan
+│   └── fixtures.py          # Fixture calendar builder
 │
 ├── db/                      # Database layer
 │   ├── connection.py        # SQLite connection helper
@@ -281,15 +280,9 @@ Validates squad against FPL rules (positions, team cap, budget, player count).
 
 ---
 
-## Strategic Planning Brain (`src/strategy/`)
+## Strategy Layer (`src/strategy/`)
 
-### ChipEvaluator (`chip_evaluator.py`)
-Evaluates all 4 chips (BB, TC, FH, WC) across every remaining GW:
-- Near-term: Uses model predictions (solve MILP for FH/WC, bench sums for BB, best starter for TC)
-- Far-term: Fixture heuristics (DGW count, BGW count, FDR)
-- TC DGW bias: 30% boost for DGW candidates (conservative predictions undervalue TC on DGWs)
-- Late-season chip urgency: Chip values multiplied by urgency factor (1.0 at GW33 -> ~1.6 at GW38) to prevent chip expiry
-- Synergies: WC->BB (build BB-optimized squad), FH+WC (complementary strategy)
+The strategy layer was simplified in the v2 redesign. ChipEvaluator, CaptainPlanner, and PlanSynthesizer were removed — chip decisions are now user-controlled, and captain selection is handled directly by the MILP solver. Only the transfer planner, availability checking, and price tracking remain.
 
 ### MultiWeekPlanner (`transfer_planner.py`)
 Rolling **5-GW** transfer planner:
@@ -301,93 +294,119 @@ Rolling **5-GW** transfer planner:
 - Reduces pool to top 200 players for efficiency
 - Passes `captain_col` to MILP solver for captain-aware squad building
 
-### CaptainPlanner (`captain_planner.py`)
-Pre-plans captaincy across the prediction horizon:
-- Uses transfer plan squads to pick captain from the planned squad
-- Flags weak captain GWs (predicted < 4 pts)
-
-### PlanSynthesizer (`plan_synthesizer.py`)
-Combines all plans into a coherent timeline:
-- Chip schedule (synergy-aware)
-- Natural-language rationale explaining the overall strategy
-- Comparison with previous plan -> changelog
-
-### Reactive Re-planning (`reactive.py`)
-- `detect_plan_invalidation()`: Checks injuries (critical), fixture changes (BB without DGW), prediction shifts (>50% captain drop), doubtful players
-- `apply_availability_adjustments()`: Zeros predictions for injured/suspended players
-- `check_plan_health()`: Lightweight check using bootstrap data (no prediction regeneration)
-- Auto-triggers on data refresh via SSE `plan_invalidated` events
+### Availability Checking (`reactive.py`)
+Simplified from v1's plan-invalidation system to two focused functions:
+- `apply_availability_adjustments()`: Zeros predictions for injured/suspended players across all future GWs; zeros doubtful players for GW+1 only
+- `check_squad_injuries()`: Checks bootstrap availability for squad players (used during READY phase injury alerts)
 
 ---
 
 ## Season Manager (`src/season/manager.py`)
 
-Orchestrates everything for a full season. Central class: `SeasonManager`.
+State-machine-driven season orchestrator. Central class: `SeasonManager` (~1050 lines).
 
-### Weekly Workflow
-1. **Refresh Data** -> updates cache, detects availability issues, checks plan health
-2. **Generate Recommendation** -> full strategy pipeline -> extract GW+1 -> DB store
-3. **Review Action Plan** -> clear steps (transfer X out / Y in, set captain to Z, activate chip)
-4. **Make Moves** -> user executes on FPL website
-5. **Record Results** -> imports actual picks, compares to recommendation, tracks accuracy
+### GW State Machine (`src/season/state_machine.py`)
 
-### `generate_recommendation()` — The Critical Orchestration
+Each gameweek cycles through 4 phases:
+
+```
+PLANNING → READY → LIVE → COMPLETE → PLANNING (next GW)
+                                    → SEASON_OVER (GW38)
+```
+
+Phase detection uses real-world signals (not stored state):
+1. `all_fixtures_finished` → COMPLETE
+2. `deadline_passed` → LIVE
+3. `has_recommendation` → READY
+4. else → PLANNING
+
+The stored phase is updated to match detected phase on every `get_status()` call. Invalid transitions are forced (detect_phase is authoritative).
+
+### Background Scheduler (`src/season/scheduler.py`)
+
+A daemon thread calls `tick()` every 5 minutes. Started automatically when `GAFFER_MANAGER_ID` env var is set. The scheduler creates its own `SeasonManager` instance and broadcasts SSE alerts for any events (injury warnings, GW completion, etc.).
+
+### `tick()` — The Core Dispatch
+
+Each call inspects the current phase and performs exactly one phase's work:
+
+| Phase | Handler | What it does |
+|-------|---------|-------------|
+| PLANNING | `_tick_planning()` | Load data → build features → generate predictions → fetch squad → run MultiWeekPlanner (or fallback MILP solver) → save recommendation + planned squad → transition to READY |
+| READY | `_tick_ready()` | Check planned squad players against bootstrap for injury/availability changes → return alerts |
+| LIVE | `_tick_live()` | Check if all GW fixtures are finished → transition to COMPLETE |
+| COMPLETE | `_tick_complete()` | Fetch actual picks + live points → build squad with captain doubling → save gw_snapshot → compare to recommendation → save outcome → transition to PLANNING (or SEASON_OVER) |
+
+### `_tick_planning()` — The Critical Orchestration
 
 This is the most complex method. Understanding its flow is essential for debugging:
 
 1. **Load data + build features + generate predictions** (1-GW ensemble + 3-GW)
-2. **Fetch current squad** from FPL API (picks, history, entry_history)
-3. **Calculate budget** using `entry_history["value"]` (real selling value with 50% profit rule), NOT `sum(now_cost)` which is optimistically high
-4. **Run `_run_strategy_pipeline()` FIRST** — this is the primary path:
-   - Generate 8-GW multi-GW predictions
-   - Replace GW+1 predictions with the exact numbers from the Predictions tab (consistency)
-   - Enrich GW+2+ with bootstrap data (web_name, position, cost, team_code)
-   - Apply availability adjustments (zero injured players across all future GWs)
-   - Determine available chips (half-season boundary aware)
-   - Run ChipEvaluator -> chip heatmap + synergies
-   - Build `chip_plan` from heatmap and pass to MultiWeekPlanner
-   - Run MultiWeekPlanner -> 5-GW transfer plan with FT banking
-   - Run CaptainPlanner -> captaincy across horizon
-   - Run PlanSynthesizer -> unified timeline + rationale + chip schedule
-   - Save strategic plan + detect/log plan changes vs previous plan
-   - **Return** the strategic plan so GW+1 can be extracted
-5. **Extract GW+1** from the strategic plan timeline (transfers, captain, chip)
-6. **Fallback**: If pipeline fails, fall back to single-GW MILP solver (`solve_transfer_milp_with_hits`) and save a stub strategic plan
-7. **Run bank-vs-use analysis** (2-week FT allocation comparison)
-8. **Save recommendation** to DB
+2. **Fetch current squad** from FPL API (picks, history, entry_history) with Free Hit reversion
+3. **Calculate budget** using `entry_history["value"]` (real selling value with 50% profit rule), NOT `sum(now_cost)`
+4. **Enrich predictions** with bootstrap data (cost, team_code, web_name)
+5. **Generate 8-GW multi-GW predictions** for the planner
+6. **Replace GW+1** predictions with exact numbers from the Predictions tab (consistency)
+7. **Apply availability adjustments** (zero injured players across all future GWs)
+8. **Run MultiWeekPlanner** → 5-GW transfer plan with FT banking → extract GW+1 step
+9. **Fallback**: If planner fails, fall back to single-GW MILP solver (`solve_transfer_milp_with_hits`)
+10. **Build enriched squad + transfer list** with full player data
+11. **Save recommendation** to DB + **save planned squad** to `planned_squad` table
+12. **Update fixtures + track prices**, transition to READY
+
+### `_tick_complete()` — Auto-Recording Results
+
+Fully automatic post-GW recording:
+1. Fetch actual picks, live event data, transfers from FPL API
+2. Build squad with live points (captain doubling applied via `multiplier`)
+3. Save `gw_snapshot` with bank, team value, rank, captain, transfers
+4. Compare to recommendation: followed_captain, followed_transfers, followed_chip
+5. Save `recommendation_outcome` with point delta
+6. Transition to PLANNING (or SEASON_OVER if GW38)
+
+**Chip tracking logic**: Only counts as "followed" when a chip was explicitly recommended. If no chip was recommended and none was played, that's a match. If no chip was recommended but one was played, that's not followed.
+
+### User Action Methods (READY phase only)
+
+All user actions are gated by `_require_ready_phase()` which checks the DB phase column:
+
+| Method | What it does |
+|--------|-------------|
+| `accept_transfers()` | Mark planned squad as accepted (saves with source="accepted") |
+| `make_transfer(out_id, in_id)` | Swap players with validation (position, budget, team limit) → re-optimise XI → recalculate points |
+| `undo_transfers()` | Reset planned squad to original recommendation |
+| `set_captain(player_id)` | Set new captain (must be starter) → auto-pick VC → recalculate points |
+| `lock_chip(chip)` | Activate chip (bboost/3xc/freehit/wildcard) → recalculate points with chip effect |
+| `unlock_chip()` | Remove active chip → recalculate points |
 
 ### Other Key Methods
-- `init_season()` — Backfills season history from FPL API; pre-season calls `generate_preseason_plan()` instead of erroring
-- `get_action_plan()` — Looks up recommendation by next_gw (not just latest), builds human-readable steps
-- `record_actual_results()` — Post-GW import + comparison to recommendation
+- `init_season()` — Backfills season history from FPL API; pre-season creates record and sets PLANNING phase
+- `get_status()` — Phase detection + status dict (gw, deadline, planned_squad, etc.)
+- `get_action_plan()` — Builds human-readable steps from latest recommendation
 - `get_dashboard()` — Aggregated dashboard data (rank, points, budget, accuracy)
-- `_log_plan_changes()` — Compares old vs new strategic plans, logs chip reschedules and captain changes to plan_changelog
-
-### Price Tracking
-- `track_prices()`: Snapshots prices for squad players **AND watchlist players**
-- `get_price_alerts()`: Raw net-transfer threshold alerts
-- `predict_price_changes()`: Ownership-based algorithm approximation
-- `get_price_history()`: Historical snapshots with date/price/net_transfers
+- `get_outcomes()` — All recorded outcomes for the season
+- `_track_prices_simple()` — Snapshots prices for squad players **AND watchlist players**
 
 ---
 
 ## Database Schema (`src/db/`)
 
-9 SQLite tables defined in `schema.py`, with migrations in `migrations.py`:
+8 SQLite tables defined in `schema.py`, with versioned migrations in `migrations.py` (3 migrations, tracked via `schema_version` table):
 
 | Table | Purpose |
 |-------|---------|
-| `season` | Manager seasons (id, manager_id, name, start_gw, current_gw) |
+| `season` | Manager seasons (id, manager_id, name, start_gw, current_gw, **phase**) |
 | `gw_snapshot` | Per-GW state (squad_json, bank, team_value, points, rank, captain, transfers) |
 | `recommendation` | Pre-GW advice (transfers_json, captain, chip, predicted/base/current_xi_points) |
 | `recommendation_outcome` | Post-GW tracking (followed_transfers, actual_points, point_delta) |
 | `price_tracker` | Player price snapshots (price, transfers_in/out, snapshot_date) |
 | `fixture_calendar` | GW x team fixture grid (fixture_count, fdr_avg, is_dgw, is_bgw) |
-| `strategic_plan` | Full plan JSON + chip heatmap JSON (per season per GW) |
-| `plan_changelog` | Plan change history (chip reschedule, captain change, reason) |
 | `watchlist` | User watchlist for price tracking |
+| `planned_squad` | User-editable squad for next GW (squad_json, source, updated_at) |
 
-9 repository classes in `repositories.py`: `SeasonRepository`, `SnapshotRepository`, `RecommendationRepository`, `OutcomeRepository`, `PriceRepository`, `FixtureRepository`, `PlanRepository`, `DashboardRepository`, `WatchlistRepository`.
+**Removed tables**: `strategic_plan` and `plan_changelog` (dropped in migration 003 — v2 redesign).
+
+9 repository classes in `repositories.py`: `SeasonRepository`, `SnapshotRepository`, `RecommendationRepository`, `OutcomeRepository`, `PriceRepository`, `FixtureRepository`, `PlannedSquadRepository`, `DashboardRepository`, `WatchlistRepository`.
 
 ---
 
@@ -415,15 +434,15 @@ This is the most complex method. Understanding its flow is essential for debuggi
 | GET | `/api/my-team?manager_id=ID` | Import manager's FPL squad |
 | POST | `/api/transfer-recommendations` | MILP transfer solver (with captain optimization) |
 
-### Season Management (`season_bp.py`)
+### Season Management (`season_bp.py`) — Legacy endpoints, now backed by new SeasonManager
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | POST | `/api/season/init` | Backfill season history |
 | GET | `/api/season/status` | Check if season exists |
 | DELETE | `/api/season/delete` | Delete season data |
 | GET | `/api/season/dashboard` | Full dashboard (rank, budget, accuracy) |
-| POST | `/api/season/generate-recommendation` | Generate strategic plan + recommendation |
-| POST | `/api/season/record-results` | Import actual results, compare to advice |
+| POST | `/api/season/generate-recommendation` | Runs tick() (replaces old generate_recommendation) |
+| POST | `/api/season/record-results` | Runs tick() (replaces old record_actual_results) |
 | GET | `/api/season/recommendations` | All recommendations for season |
 | GET | `/api/season/snapshots` | All GW snapshots |
 | GET | `/api/season/fixtures` | Fixture calendar |
@@ -433,16 +452,29 @@ This is the most complex method. Understanding its flow is essential for debuggi
 | GET | `/api/season/bank-analysis` | Bank analysis |
 | POST | `/api/season/update-fixtures` | Rebuild fixture calendar |
 
-### Strategic Planning (`strategy_bp.py`)
+### Season V2 (`season_v2_bp.py`) — State-machine-driven endpoints
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| GET/POST | `/api/season/strategic-plan` | Fetch/generate full strategic plan |
+| POST | `/api/v2/season/init` | Initialize season from FPL API |
+| GET | `/api/v2/season/status` | Phase-aware status (gw, phase, deadline, planned_squad) |
+| DELETE | `/api/v2/season/delete` | Delete season data |
+| POST | `/api/v2/season/tick` | Manual trigger of state machine tick |
+| POST | `/api/v2/season/accept-transfers` | Accept recommended transfers as-is |
+| POST | `/api/v2/season/make-transfer` | Override: swap player_out for player_in |
+| POST | `/api/v2/season/undo-transfers` | Reset squad to original recommendation |
+| POST | `/api/v2/season/lock-chip` | Activate a chip (bboost/3xc/freehit/wildcard) |
+| POST | `/api/v2/season/unlock-chip` | Remove active chip |
+| POST | `/api/v2/season/set-captain` | Set captain (must be starter) |
+| GET | `/api/v2/season/fixture-lookahead` | Stub (not yet implemented) |
+| GET | `/api/v2/season/history` | Stub (not yet implemented) |
+| GET | `/api/v2/season/available-players` | Stub (not yet implemented) |
+
+### Strategy (`strategy_bp.py`) — Simplified
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
 | GET | `/api/season/action-plan` | Clear action items for next GW |
 | GET | `/api/season/outcomes` | All recorded outcomes |
-| GET | `/api/season/plan-health` | Check plan validity (injuries/fixtures) |
-| GET | `/api/season/plan-changelog` | Plan change history |
-| POST | `/api/preseason/generate` | Pre-season initial squad + chip plan |
-| GET | `/api/preseason/result` | Pre-season results |
+| POST | `/api/preseason/generate` | Runs tick() for pre-season |
 
 ### Prices (`prices_bp.py`)
 | Method | Endpoint | Purpose |
@@ -476,14 +508,15 @@ Single-file frontend (~5500 lines) with dark theme, CSS variables, SSE progress,
 5. **Season** — Full season management dashboard
 6. **Monsters** — Top 3 players across 8 categories with podium layout
 
-### Season Sub-tabs
-- **Overview**: Rank chart, points bar chart, budget chart, prediction accuracy
-- **Workflow**: Step indicators (Refresh -> Recommend -> Review -> Execute -> Record), action plan, outcomes
-- **Fixtures**: GW x team fixture grid
-- **Transfers**: Transfer history table
-- **Chips**: Status (used/available) + values
-- **Prices**: Alerts, ownership-based predictions, price history chart, squad prices
-- **Strategy**: Plan health banner, rationale, transfer timeline cards, captain plan, chip schedule + synergies, changelog
+### Season Tab (Phase-Aware GW View)
+The Season tab is a single GW-centric view that adapts to the current phase:
+- **GW Header**: Phase badge (PLANNING/READY/LIVE/COMPLETE/SEASON OVER), deadline countdown, predicted points
+- **PLANNING phase**: "Generating recommendation..." with progress indicator
+- **READY phase**: Transfer cards (recommended + overrides), captain picker, chip toggles, transfer override modal, "Accept" button. Auto-polls every 60 seconds for injury alerts.
+- **LIVE phase**: Live points display (auto-polls every 60 seconds)
+- **COMPLETE phase**: Results summary with actual vs predicted points
+- **SEASON OVER**: Final season summary
+- **History section**: Collapsible past GW results at the bottom
 
 ---
 
@@ -505,7 +538,7 @@ if "cost" not in df.columns:
             df.at[idx, "team_code"] = id_to_code.get(el.get("team"))
 ```
 
-This pattern is required in: `core.py` (predictions endpoint), `team.py` (best-team, transfer-recs), `season/manager.py` (generate_recommendation).
+This pattern is required in: `core.py` (predictions endpoint), `team.py` (best-team, transfer-recs), `season/manager.py` (_tick_planning).
 
 ### FPL API event_points and Captain Doubling
 FPL API `event_points` in bootstrap elements is the RAW score (not multiplied by captain). Captain doubling must be applied in backend:
@@ -560,7 +593,7 @@ if unavailable_ids and "predicted_next_3gw_points" in result.columns:
 FPL only gives you 50% of price rises when selling. The public API `now_cost` is the BUY price. Use `entry_history["value"]` from the picks endpoint for accurate budget:
 
 ```python
-# In generate_recommendation():
+# In _tick_planning():
 api_value = entry_history.get("value")
 if api_value:
     total_budget = round(api_value / 10, 1)  # Correct: includes 50% rule
@@ -568,9 +601,9 @@ else:
     total_budget = round(bank + current_squad_cost, 1)  # Fallback: slightly optimistic
 ```
 
-### 3. Strategy Pipeline First, Single-GW Solver as Fallback
+### 3. MultiWeekPlanner First, Single-GW Solver as Fallback
 
-`generate_recommendation()` runs the full multi-GW strategy pipeline FIRST, then extracts GW+1 from the timeline. The single-GW MILP solver is ONLY the fallback when the pipeline fails. Do NOT reverse this — the pipeline produces better recommendations because it considers future GWs.
+`_tick_planning()` runs the MultiWeekPlanner FIRST, then extracts GW+1 from the plan. The single-GW MILP solver is ONLY the fallback when the planner fails. Do NOT reverse this — the planner produces better recommendations because it considers future GWs.
 
 ### 4. Chip GW Solver Failures Must Have Fallbacks
 
@@ -601,9 +634,9 @@ gw_mins = gw_mins.copy()  # Required before boolean assignment
 gw_mins["played"] = gw_mins["minutes_played"] > 0
 ```
 
-### 8. price_tracker Must Include season_id
+### 8. Price Tracking Must Include Watchlist
 
-`strategy/price_tracker.py` functions that return player dicts must include `"season_id": season_id` so the repository can correctly filter snapshots.
+`_track_prices_simple()` in `season/manager.py` snapshots prices for squad players AND watchlist players. Both sets must be included for price alerts to work correctly.
 
 ### 9. Free Hit Squad Revert Must Use Pre-FH Picks
 
@@ -611,7 +644,7 @@ After playing Free Hit, the squad reverts to the pre-FH squad. Any code fetching
 
 - `api/team.py: api_my_team()` — fetches BOTH actual (FH GW) picks for display AND reverted picks for planning/optimization
 - `api/team.py: api_transfer_recommendations()` — uses reverted picks as the base squad for transfer solving
-- `season/manager.py: generate_recommendation()` — uses reverted picks for the full strategy pipeline
+- `season/manager.py: _tick_planning()` — uses reverted picks for the transfer planner
 - `season/manager.py: _track_prices()` — uses reverted squad for price tracking
 
 The My Team page uses a dual-fetch pattern: `actual_picks_data` (FH GW) for the "actual" pitch display, `planning_picks_data` (pre-FH GW) for the optimized squad and transfer recommendations.
@@ -627,14 +660,14 @@ lsof -ti:9876 | xargs kill -9
 # Run all tests (103 total, ~10 min)
 .venv/bin/python -m pytest tests/ -v
 
-# Run fast tests only (~1 sec)
-.venv/bin/python -m pytest tests/test_correctness.py tests/test_integration.py -v
+# Run fast tests only (~2 sec)
+.venv/bin/python -m pytest tests/test_correctness.py tests/test_integration.py tests/test_state_machine.py -v
 
 # Start server
 FLASK_APP=src.api .venv/bin/python -m flask run --port 9876
 ```
 
-### Test Structure (3 files, 103 tests)
+### Test Structure (4 files, 176 tests)
 
 **`test_correctness.py`** (57 tests, <1 sec) — Mathematical correctness and FPL compliance:
 - Config sanity: decay curve, ensemble weights, captain weights, squad positions, FPL scoring rules, soft caps, DefCon thresholds, late-season config
@@ -646,35 +679,43 @@ FLASK_APP=src.api .venv/bin/python -m flask run --port 9876
 - Prediction properties: no negatives, availability zeroing, 3-GW re-zeroing after merge
 
 **`test_integration.py`** (17 tests, ~1 sec) — Smoke tests:
-- Flask app creation and route registration
-- API endpoints (predictions, model-info, season/status)
+- Flask app creation and route registration (including v2 routes)
+- API endpoints (predictions, model-info, season/status, v2/season/status)
 - MILP solver (squad, transfers, captain)
 - FPL rules validation (squad count, team limits)
 - Database schema creation and CRUD
 - Feature registry, config loading, module imports
 
-**`test_strategy_pipeline.py`** (29 tests, ~5 min) — Strategy layer behaviour:
-- ChipEvaluator: heatmap, per-GW values, BB in DGW, empty chips, synergies
+**`test_state_machine.py`** (89 tests, ~1 sec) — Season Manager v2 behaviour:
+- GWPhase: enum values, string conversion, valid/invalid transitions, next_phase, detect_phase priority
+- SeasonManager: get_status (active/inactive), tick dispatch (planning/ready/live/complete)
+- User actions: accept_transfers, make_transfer (position/budget/team validation, hit tracking), undo_transfers, set_captain (starter check, VC auto-pick, points recalculation), lock/unlock chip
+- Init season: method existence, price tracking
+- Scheduler: start/stop lifecycle
+- TickLive: transitions when finished, no transition when pending
+- TickComplete: records results, season over at GW38, no recommendation handling, API failure resilience
+
+**`test_strategy_pipeline.py`** (13 tests, ~5 min) — Strategy layer behaviour:
 - MultiWeekPlanner: plan steps, horizon, squad IDs, zero FT, rationale, empty predictions
-- CaptainPlanner: coverage, captain in squad, required fields, transfer plan squads, VC != captain
-- PlanSynthesizer: required keys, timeline merges, no duplicate chip GWs, JSON serialisable
 - Availability: injured zeroed all GWs, doubtful first GW only, healthy unchanged
-- Plan invalidation: injury triggers, captain drop triggers, no triggers when healthy
-- Full pipeline: valid plan, injuries adjust captaincy, DB storage roundtrip
+- Squad injury checking: injured, doubtful, healthy, non-squad players
 
 ### Key test commands
 ```bash
+# V2 status (phase-aware)
+curl -s "http://127.0.0.1:9876/api/v2/season/status?manager_id=12904702"
+
+# Manual tick (trigger state machine)
+curl -s -X POST http://127.0.0.1:9876/api/v2/season/tick -H 'Content-Type: application/json' -d '{"manager_id":12904702}'
+
 # Action plan
 curl -s "http://127.0.0.1:9876/api/season/action-plan?manager_id=12904702"
 
-# Strategic plan
-curl -s "http://127.0.0.1:9876/api/season/strategic-plan?manager_id=12904702"
-
-# Plan health
-curl -s "http://127.0.0.1:9876/api/season/plan-health?manager_id=12904702"
-
 # Dashboard
 curl -s "http://127.0.0.1:9876/api/season/dashboard?manager_id=12904702"
+
+# Run fast tests only (~2 sec)
+.venv/bin/python -m pytest tests/test_correctness.py tests/test_integration.py tests/test_state_machine.py -v
 ```
 
 ---
@@ -714,15 +755,14 @@ Full audit completed: 103 tests passed, 0 failures. 0 bugs found. All 8 previous
 
 | Pattern | Status | Evidence |
 |---------|--------|----------|
-| Availability zeroing before 3-GW merge | PASS | `ml/prediction.py:417-444` (first pass), `:461-466` (second pass) |
-| Budget using now_cost sum | PASS | `season/manager.py:1165` uses `entry_history["value"]` |
-| Single-GW solver as primary path | PASS | `season/manager.py:1233` runs pipeline FIRST |
-| Chip plan not passed to planner | PASS | `season/manager.py:695-712` passes chip_plan |
+| Availability zeroing before 3-GW merge | PASS | `ml/prediction.py` (first pass + second pass after 3-GW merge) |
+| Budget using now_cost sum | PASS | `season/manager.py:280` uses `entry_history["value"]` |
+| MultiWeekPlanner first, MILP fallback | PASS | `season/manager.py:461` — planner runs first, fallback at :461 |
 | Solver failure kills planning | PASS | `strategy/transfer_planner.py` falls back to current squad pts |
-| Hit cost recomputed from sets | PASS | `solver/validator.py:112-124` trusts solver's hits |
-| Watchlist excluded from prices | PASS | `season/manager.py:519-521` includes watchlist |
-| pandas CoW without .copy() | PASS | `features/playerstats.py:105` has .copy() |
-| FH squad not reverted for planning | PASS | `api/team.py`, `season/manager.py` call `resolve_current_squad_event()` |
+| Hit cost recomputed from sets | PASS | `solver/validator.py` trusts solver's hits |
+| Watchlist excluded from prices | PASS | `season/manager.py:1256` includes watchlist in price tracking |
+| pandas CoW without .copy() | PASS | `features/playerstats.py` has .copy() |
+| FH squad not reverted for planning | PASS | `season/manager.py:251` calls `resolve_current_squad_event()` |
 
 ---
 
@@ -1025,7 +1065,7 @@ All path references go through `src.paths` — no module should compute its own 
 
 ### Spec file gotchas
 - **xgboost.testing**: `collect_all("xgboost")` imports `xgboost.testing` which calls `pytest.importorskip("hypothesis")`. Fixed with `filter_submodules=lambda name: "testing" not in name`.
-- **Hidden imports**: All 70 `src.*` modules must be listed explicitly in the spec files.
+- **Hidden imports**: All `src.*` modules must be listed explicitly in the spec files (including `src.season.state_machine`, `src.season.scheduler`, `src.api.season_v2_bp`).
 
 ---
 
@@ -1103,23 +1143,22 @@ If an agent finds nothing wrong for an item, it still reports PASS with the file
 1. **FPL rules in solver**: Read `solve_milp_team` in `squad.py`. Verify constraints: 15 players, 2 GKP / 5 DEF / 5 MID / 3 FWD, max 3 per team, 11 starters, formation (1 GKP, 3-5 DEF, 2-5 MID, 1-3 FWD), budget, captain must be a starter. Cite the line for each constraint.
 2. **Transfer hit counting**: Read `solve_transfer_milp_with_hits` in `transfers.py`. Verify forced replacements (unavailable players) are not counted as paid hits. Trace the `forced` variable. Cite lines.
 3. **State tracking in multi-GW simulation**: Read `MultiWeekPlanner` in `transfer_planner.py`. For each simulated GW, verify: FTs increment correctly (+1 per GW, max 5), budget is preserved (not recalculated from squad value), WC makes transfers permanent, FH reverts squad.
-4. **`generate_recommendation()` flow**: Read this function in `season/manager.py`. Verify: (a) strategy pipeline runs FIRST, (b) GW+1 is extracted from timeline, (c) single-GW solver is ONLY used as fallback, (d) budget comes from `entry_history["value"]` not `sum(now_cost)`.
+4. **`_tick_planning()` flow**: Read this function in `season/manager.py`. Verify: (a) MultiWeekPlanner runs FIRST, (b) GW+1 is extracted from plan, (c) single-GW solver is ONLY used as fallback, (d) budget comes from `entry_history["value"]` not `sum(now_cost)`. Also verify `_tick_complete()` correctly records results and transitions phase.
 5. **Solver fallbacks**: Find every call to `solve_milp_team`, `solve_transfer_milp`, `solve_transfer_milp_with_hits`. Verify each caller handles a `None` return. Find `_simulate_chip_gw` — verify it falls back to current squad points on solver failure.
-6. **Chip evaluation**: Read `ChipEvaluator` in `chip_evaluator.py`. Verify: BB value uses DGW awareness, FH uses BGW/bad fixture detection, WC evaluates over multi-GW window, synergies (WC->BB, FH+WC) don't cross the GW19/GW20 half-season boundary.
+6. **Phase transitions**: Read `state_machine.py` and `manager.py`. Verify: detect_phase priority is correct (COMPLETE > LIVE > READY > PLANNING), forced phase updates are logged, `_tick_complete()` transitions to SEASON_OVER at GW38 and PLANNING otherwise.
 7. **Database integrity**: In `season/manager.py`, verify every DB query filters by correct `season_id` and `manager_id`. In `_track_prices`, verify watchlist players are included.
 8. **Previously found bugs — regression check**: Verify EACH of these patterns has NOT been reintroduced:
 
 | Pattern | Where to Check | What Goes Wrong |
 |---------|---------------|-----------------|
 | Availability zeroing before 3-GW merge | `ml/prediction.py` | Injured players get non-zero 3-GW predictions |
-| Budget using now_cost sum | `season/manager.py` generate_recommendation | Budget ~5% too high |
-| Single-GW solver as primary path | `season/manager.py` generate_recommendation | Loses multi-GW intelligence |
-| Chip plan not passed to planner | `season/manager.py` _run_strategy_pipeline | Planner ignores chip schedule |
+| Budget using now_cost sum | `season/manager.py` _tick_planning | Budget ~5% too high |
+| MultiWeekPlanner first, MILP fallback | `season/manager.py` _tick_planning | Loses multi-GW intelligence |
 | Solver failure kills planning | `strategy/transfer_planner.py` | One bad GW aborts entire 5-GW plan |
 | Hit cost recomputed from sets | `solver/validator.py` | Forced replacements counted as paid hits |
-| Watchlist excluded from prices | `season/manager.py` _track_prices | Price alerts miss watched players |
+| Watchlist excluded from prices | `season/manager.py` _track_prices_simple | Price alerts miss watched players |
 | pandas CoW without .copy() | `features/playerstats.py` | Silent data corruption |
-| FH squad not reverted for planning | `api/team.py`, `season/manager.py` | Planning uses FH squad instead of reverted pre-FH squad |
+| FH squad not reverted for planning | `season/manager.py` _tick_planning | Planning uses FH squad instead of reverted pre-FH squad |
 
 ---
 
@@ -1176,7 +1215,7 @@ This agent does NOT check code. It evaluates whether the system would make GOOD 
 
 #### Agent 6: Think Like an Elite FPL Manager
 
-**Files to read:** `src/strategy/chip_evaluator.py`, `src/strategy/transfer_planner.py`, `src/strategy/captain_planner.py`, `src/season/manager.py`, `src/ml/prediction.py`, `src/config.py`.
+**Files to read:** `src/strategy/transfer_planner.py`, `src/season/manager.py`, `src/season/state_machine.py`, `src/ml/prediction.py`, `src/config.py`.
 
 **Checklist — answer every item with a verdict (GOOD / SUBOPTIMAL / WRONG) and what a top manager would do differently:**
 

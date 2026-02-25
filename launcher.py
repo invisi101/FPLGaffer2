@@ -35,6 +35,7 @@ if __name__ == "__main__":
     if is_server_running():
         print(f"GafferAI is already running at {URL}")
         webbrowser.open(URL)
+        time.sleep(1)  # Give macOS time to dispatch the browser open
         sys.exit(0)
 
     try:
