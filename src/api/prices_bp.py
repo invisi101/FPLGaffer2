@@ -41,9 +41,27 @@ def api_season_prices():
     if serr:
         return serr
 
-    prices = mgr.prices.get_latest_prices(season["id"])
+    all_prices = mgr.prices.get_latest_prices(season["id"])
+
+    # Filter to current squad + watchlist only (avoids stale FH players)
+    from src.api.helpers import get_next_gw, load_bootstrap
+    bootstrap = load_bootstrap()
+    next_gw = get_next_gw(bootstrap) if bootstrap else None
+    current_ids: set[int] | None = None
+    if next_gw:
+        planned = mgr.planned_squads.get_planned_squad(season["id"], next_gw)
+        if planned and planned.get("squad_json"):
+            players = planned["squad_json"].get("players", [])
+            if players:
+                current_ids = {p.get("player_id") or p.get("id") for p in players if isinstance(p, dict)}
+    watchlist = mgr.watchlist.get_watchlist(season["id"])
+    wl_ids = {w["player_id"] for w in watchlist}
+    if current_ids is not None:
+        allowed = current_ids | wl_ids
+        all_prices = [p for p in all_prices if p.get("player_id") in allowed]
+
     alerts = mgr.get_price_alerts(season["id"])
-    return jsonify({"prices": prices, "alerts": alerts})
+    return jsonify({"prices": all_prices, "alerts": alerts})
 
 
 @prices_bp.route("/update-prices", methods=["POST"])
