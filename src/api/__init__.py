@@ -17,6 +17,7 @@ def create_app() -> Flask:
     from src.api.prices_bp import prices_bp
     from src.api.backtest_bp import backtest_bp
     from src.api.compare_bp import compare_bp
+    from src.api.season_v2_bp import season_v2_bp
 
     app.register_blueprint(core_bp)
     app.register_blueprint(team_bp)
@@ -25,5 +26,6 @@ def create_app() -> Flask:
     app.register_blueprint(prices_bp, url_prefix="/api/season")
     app.register_blueprint(backtest_bp)
     app.register_blueprint(compare_bp)
+    app.register_blueprint(season_v2_bp, url_prefix="/api/v2/season")
 
     return app

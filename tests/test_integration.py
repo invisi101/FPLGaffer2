@@ -47,6 +47,19 @@ def test_api_routes_exist(app):
         "/api/season/strategic-plan",
         "/api/season/prices",
         "/api/season/watchlist",
+        "/api/v2/season/init",
+        "/api/v2/season/status",
+        "/api/v2/season/tick",
+        "/api/v2/season/accept-transfers",
+        "/api/v2/season/make-transfer",
+        "/api/v2/season/undo-transfers",
+        "/api/v2/season/lock-chip",
+        "/api/v2/season/unlock-chip",
+        "/api/v2/season/set-captain",
+        "/api/v2/season/fixture-lookahead",
+        "/api/v2/season/history",
+        "/api/v2/season/available-players",
+        "/api/v2/season/delete",
     ]
     for route in expected:
         assert route in rules, f"Missing route: {route}"
@@ -84,6 +97,16 @@ def test_season_status_with_manager_id(client):
     assert resp.status_code == 200
     data = resp.get_json()
     assert data.get("active") is False
+
+
+def test_v2_status_endpoint(client):
+    """GET /api/v2/season/status returns 200 with phase info."""
+    resp = client.get("/api/v2/season/status?manager_id=12345")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert "active" in data
+    # No season initialized, so active should be False
+    assert data["active"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +335,8 @@ def test_all_modules_import():
         "src.strategy.chip_evaluator", "src.strategy.transfer_planner",
         "src.strategy.captain_planner", "src.strategy.plan_synthesizer",
         "src.strategy.reactive", "src.strategy.price_tracker",
-        "src.season.manager", "src.season.recorder", "src.season.dashboard",
+        "src.season.manager", "src.season.manager_v2", "src.season.state_machine",
+        "src.season.recorder", "src.season.dashboard",
         "src.season.fixtures", "src.season.preseason",
         "src.db.connection", "src.db.schema", "src.db.migrations",
         "src.db.repositories",
