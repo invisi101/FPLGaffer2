@@ -7,6 +7,7 @@ Each repository takes a ``db_path`` in ``__init__`` and uses
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from src.db.connection import connect
@@ -82,6 +83,11 @@ class SeasonRepository:
                 "UPDATE season SET current_gw=? WHERE id=?",
                 (current_gw, season_id),
             )
+            conn.commit()
+
+    def update_phase(self, season_id: int, phase: str) -> None:
+        with connect(self.db_path) as conn:
+            conn.execute("UPDATE season SET phase=? WHERE id=?", (phase, season_id))
             conn.commit()
 
     def clear_generated_data(self, season_id: int) -> None:
@@ -636,5 +642,57 @@ class WatchlistRepository:
             conn.execute(
                 "DELETE FROM watchlist WHERE season_id=? AND player_id=?",
                 (season_id, player_id),
+            )
+            conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# PlannedSquadRepository
+# ---------------------------------------------------------------------------
+
+class PlannedSquadRepository:
+    """CRUD for the ``planned_squad`` table."""
+
+    def __init__(self, db_path: Path | None = None):
+        self.db_path = db_path or DB_PATH
+
+    def save_planned_squad(
+        self,
+        season_id: int,
+        gw: int,
+        squad_json: dict,
+        source: str = "recommended",
+    ) -> None:
+        serialized = json.dumps(squad_json)
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO planned_squad
+                   (season_id, gameweek, squad_json, source, updated_at)
+                   VALUES (?, ?, ?, ?, datetime('now'))
+                   ON CONFLICT(season_id, gameweek) DO UPDATE SET
+                     squad_json=excluded.squad_json,
+                     source=excluded.source,
+                     updated_at=datetime('now')""",
+                (season_id, gw, serialized, source),
+            )
+            conn.commit()
+
+    def get_planned_squad(self, season_id: int, gw: int) -> dict | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT * FROM planned_squad WHERE season_id=? AND gameweek=?",
+                (season_id, gw),
+            ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["squad_json"] = json.loads(d["squad_json"])
+        return d
+
+    def delete_planned_squad(self, season_id: int, gw: int) -> None:
+        with connect(self.db_path) as conn:
+            conn.execute(
+                "DELETE FROM planned_squad WHERE season_id=? AND gameweek=?",
+                (season_id, gw),
             )
             conn.commit()

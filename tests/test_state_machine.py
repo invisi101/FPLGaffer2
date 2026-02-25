@@ -158,3 +158,92 @@ class TestDetectPhase:
             all_fixtures_finished=True,
         )
         assert result == GWPhase.COMPLETE
+
+
+# ---------------------------------------------------------------------------
+# PlannedSquadRepository
+# ---------------------------------------------------------------------------
+
+class TestPlannedSquadRepository:
+    @pytest.fixture
+    def db_path(self, tmp_path):
+        path = tmp_path / "test.db"
+        from src.db.connection import connect
+        with connect(path) as conn:
+            from src.db.schema import init_schema
+            from src.db.migrations import apply_migrations
+            init_schema(conn)
+            apply_migrations(conn)
+        return path
+
+    @pytest.fixture
+    def season_id(self, db_path):
+        """Create a season row so FK constraints are satisfied."""
+        from src.db.repositories import SeasonRepository
+        repo = SeasonRepository(db_path)
+        return repo.create_season(manager_id=999, season_name="2025-2026")
+
+    def test_save_and_get(self, db_path, season_id):
+        from src.db.repositories import PlannedSquadRepository
+        repo = PlannedSquadRepository(db_path)
+        squad = {"players": [{"id": 1, "name": "Salah"}], "captain_id": 1, "chip": None}
+        repo.save_planned_squad(season_id=season_id, gw=10, squad_json=squad, source="recommended")
+        result = repo.get_planned_squad(season_id=season_id, gw=10)
+        assert result is not None
+        assert result["source"] == "recommended"
+        assert result["squad_json"]["captain_id"] == 1
+
+    def test_upsert_overwrites(self, db_path, season_id):
+        from src.db.repositories import PlannedSquadRepository
+        repo = PlannedSquadRepository(db_path)
+        squad1 = {"players": [], "captain_id": 1}
+        repo.save_planned_squad(season_id, 10, squad1, "recommended")
+        squad2 = {"players": [], "captain_id": 2}
+        repo.save_planned_squad(season_id, 10, squad2, "user_override")
+        result = repo.get_planned_squad(season_id, 10)
+        assert result["source"] == "user_override"
+        assert result["squad_json"]["captain_id"] == 2
+
+    def test_get_nonexistent(self, db_path, season_id):
+        from src.db.repositories import PlannedSquadRepository
+        repo = PlannedSquadRepository(db_path)
+        assert repo.get_planned_squad(season_id, 99) is None
+
+    def test_delete(self, db_path, season_id):
+        from src.db.repositories import PlannedSquadRepository
+        repo = PlannedSquadRepository(db_path)
+        repo.save_planned_squad(season_id, 10, {"x": 1}, "recommended")
+        repo.delete_planned_squad(season_id, 10)
+        assert repo.get_planned_squad(season_id, 10) is None
+
+
+# ---------------------------------------------------------------------------
+# SeasonPhase
+# ---------------------------------------------------------------------------
+
+class TestSeasonPhase:
+    @pytest.fixture
+    def db_path(self, tmp_path):
+        path = tmp_path / "test.db"
+        from src.db.connection import connect
+        with connect(path) as conn:
+            from src.db.schema import init_schema
+            from src.db.migrations import apply_migrations
+            init_schema(conn)
+            apply_migrations(conn)
+        return path
+
+    def test_new_season_has_planning_phase(self, db_path):
+        from src.db.repositories import SeasonRepository
+        repo = SeasonRepository(db_path)
+        repo.create_season(manager_id=123, season_name="2025-2026")
+        season = repo.get_season(123, "2025-2026")
+        assert season["phase"] == "planning"
+
+    def test_update_phase(self, db_path):
+        from src.db.repositories import SeasonRepository
+        repo = SeasonRepository(db_path)
+        sid = repo.create_season(manager_id=123, season_name="2025-2026")
+        repo.update_phase(sid, "ready")
+        season = repo.get_season(123, "2025-2026")
+        assert season["phase"] == "ready"

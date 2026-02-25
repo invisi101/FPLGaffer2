@@ -58,10 +58,32 @@ def _migration_001_initial_schema(conn: sqlite3.Connection) -> None:
     init_schema(conn)
 
 
+def _migration_002_planned_squad_and_phase(conn: sqlite3.Connection) -> None:
+    """Add planned_squad table and phase column to season."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS planned_squad (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            season_id INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
+            gameweek INTEGER NOT NULL,
+            squad_json TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'recommended',
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(season_id, gameweek)
+        )
+    """)
+    try:
+        conn.execute("ALTER TABLE season ADD COLUMN phase TEXT NOT NULL DEFAULT 'planning'")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    conn.commit()
+
+
 # Registry: version number -> migration function.
 # Each migration brings the DB from (version - 1) to (version).
 _MIGRATIONS: dict[int, callable] = {
     1: _migration_001_initial_schema,
+    2: _migration_002_planned_squad_and_phase,
 }
 
 LATEST_VERSION: int = max(_MIGRATIONS)

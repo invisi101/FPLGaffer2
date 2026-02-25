@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS season (
     season_name TEXT NOT NULL,
     start_gw INTEGER NOT NULL DEFAULT 1,
     current_gw INTEGER,
+    phase TEXT NOT NULL DEFAULT 'planning',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(manager_id, season_name)
 );
@@ -136,6 +137,17 @@ CREATE TABLE IF NOT EXISTS watchlist (
     price_when_added REAL,
     added_date TEXT NOT NULL DEFAULT (date('now')),
     UNIQUE(season_id, player_id)
+);
+
+CREATE TABLE IF NOT EXISTS planned_squad (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    season_id INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
+    gameweek INTEGER NOT NULL,
+    squad_json TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'recommended',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(season_id, gameweek)
 );
 """
 
