@@ -1736,6 +1736,195 @@ class SeasonManager:
         )
         return {"status": "transfer_made", "planned_squad": squad_json}
 
+    def make_transfers(
+        self,
+        manager_id: int,
+        players_out_ids: list[int],
+        players_in_ids: list[int],
+    ) -> dict:
+        """Swap multiple players at once, enabling cross-value transfers.
+
+        Validates aggregate position balance, total budget, team limits,
+        then performs all swaps, re-optimises XI, and recalculates points.
+        """
+        from collections import Counter
+
+        # --- Basic input validation ---
+        if len(players_out_ids) != len(players_in_ids):
+            return {"error": "players_out and players_in must be the same length"}
+        if len(players_out_ids) < 1:
+            return {"error": "Must transfer at least 1 player"}
+        if len(set(players_out_ids)) != len(players_out_ids):
+            return {"error": "Duplicate player IDs in players_out"}
+        if len(set(players_in_ids)) != len(players_in_ids):
+            return {"error": "Duplicate player IDs in players_in"}
+        if set(players_out_ids) & set(players_in_ids):
+            return {"error": "players_out and players_in must not overlap"}
+
+        # --- Phase / squad checks ---
+        season, err = self._require_ready_phase(manager_id)
+        if err:
+            return err
+
+        season_id = season["id"]
+        next_gw = self._get_next_gw_for_season(season)
+        if not next_gw:
+            return {"error": "Cannot determine next gameweek"}
+
+        planned = self.planned_squads.get_planned_squad(season_id, next_gw)
+        if not planned:
+            return {"error": "No planned squad to modify"}
+
+        squad_json = copy.deepcopy(planned["squad_json"])
+        players = squad_json.get("players", [])
+
+        # --- Validate all out IDs exist in squad ---
+        players_by_id = {p["player_id"]: p for p in players}
+        for out_id in players_out_ids:
+            if out_id not in players_by_id:
+                return {"error": f"Player {out_id} is not in the squad"}
+
+        # --- Load bootstrap ---
+        bootstrap = load_bootstrap()
+        if not bootstrap:
+            return {"error": "Cannot load player data (bootstrap unavailable)"}
+
+        elements_by_id = {el["id"]: el for el in bootstrap.get("elements", [])}
+        id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
+
+        # --- Validate all in IDs exist in bootstrap ---
+        in_elements = []
+        for in_id in players_in_ids:
+            el = elements_by_id.get(in_id)
+            if not el:
+                return {"error": f"Player {in_id} not found in FPL data"}
+            in_elements.append(el)
+
+        # --- No in-player already in remaining squad ---
+        remaining_ids = {p["player_id"] for p in players} - set(players_out_ids)
+        for in_id in players_in_ids:
+            if in_id in remaining_ids:
+                return {"error": f"Player {in_id} is already in the squad"}
+
+        # --- Position balance: aggregate positions must match ---
+        out_positions = Counter(
+            players_by_id[oid].get("position", "") for oid in players_out_ids
+        )
+        in_positions = Counter(
+            ELEMENT_TYPE_MAP.get(el.get("element_type"), "") for el in in_elements
+        )
+        if out_positions != in_positions:
+            return {
+                "error": (
+                    f"Position mismatch: selling {dict(out_positions)}, "
+                    f"buying {dict(in_positions)}"
+                ),
+            }
+
+        # --- Budget check ---
+        bank = squad_json.get("bank", 0) or 0
+        total_out_cost = sum(
+            players_by_id[oid].get("cost", 0) or 0 for oid in players_out_ids
+        )
+        total_in_cost = sum(
+            round(el.get("now_cost", 0) / 10, 1) for el in in_elements
+        )
+        new_bank = round(bank + total_out_cost - total_in_cost, 1)
+        if new_bank < 0:
+            return {
+                "error": (
+                    f"Insufficient budget: need {total_in_cost}m, "
+                    f"have {round(bank + total_out_cost, 1)}m "
+                    f"(bank {bank}m + sales {total_out_cost}m)"
+                ),
+            }
+
+        # --- Team limit check on resulting squad ---
+        team_counts: dict[int, int] = {}
+        for p in players:
+            if p["player_id"] in set(players_out_ids):
+                continue
+            tc = p.get("team_code")
+            if tc is not None:
+                team_counts[tc] = team_counts.get(tc, 0) + 1
+        for el in in_elements:
+            tc = id_to_code.get(el.get("team"))
+            if tc is not None:
+                if team_counts.get(tc, 0) >= 3:
+                    return {
+                        "error": (
+                            f"Team limit: already have 3 players from team "
+                            f"code {tc} (adding {el.get('web_name', '')})"
+                        ),
+                    }
+                team_counts[tc] = team_counts.get(tc, 0) + 1
+
+        # --- Perform swaps ---
+        out_set = set(players_out_ids)
+        new_players = [p for p in players if p["player_id"] not in out_set]
+        for el in in_elements:
+            in_tc = id_to_code.get(el.get("team"))
+            new_players.append({
+                "player_id": el["id"],
+                "web_name": el.get("web_name", f"Player {el['id']}"),
+                "position": ELEMENT_TYPE_MAP.get(el.get("element_type"), ""),
+                "team_code": in_tc,
+                "cost": round(el.get("now_cost", 0) / 10, 1),
+                "predicted_next_gw_points": 0.0,
+                "captain_score": 0.0,
+                "starter": False,
+                "is_captain": False,
+                "is_vice_captain": False,
+            })
+
+        # --- Track transfer in/out lists ---
+        transfers_in = list(squad_json.get("transfers_in", []))
+        transfers_out = list(squad_json.get("transfers_out", []))
+        for el in in_elements:
+            in_tc = id_to_code.get(el.get("team"))
+            transfers_in.append({
+                "player_id": el["id"],
+                "web_name": el.get("web_name", ""),
+                "position": ELEMENT_TYPE_MAP.get(el.get("element_type"), ""),
+                "cost": round(el.get("now_cost", 0) / 10, 1),
+            })
+        for oid in players_out_ids:
+            out_p = players_by_id[oid]
+            transfers_out.append({
+                "player_id": oid,
+                "web_name": out_p.get("web_name", ""),
+                "position": out_p.get("position", ""),
+                "cost": out_p.get("cost", 0),
+            })
+        squad_json["transfers_in"] = transfers_in
+        squad_json["transfers_out"] = transfers_out
+
+        # --- Update hits ---
+        free_transfers = squad_json.get("free_transfers", 1) or 1
+        total_transfer_count = len(transfers_in)
+        extra = max(0, total_transfer_count - free_transfers)
+        squad_json["hits"] = extra
+
+        # --- Update bank and players ---
+        squad_json["bank"] = new_bank
+        squad_json["players"] = optimize_starting_xi(new_players)
+
+        # --- Update captain/vc IDs from optimised players ---
+        for p in squad_json["players"]:
+            if p.get("is_captain"):
+                squad_json["captain_id"] = p["player_id"]
+            if p.get("is_vice_captain"):
+                squad_json["vice_captain_id"] = p["player_id"]
+
+        # --- Recalculate predicted points ---
+        squad_json["predicted_points"] = self._calculate_predicted_points(squad_json)
+
+        # --- Save ---
+        self.planned_squads.save_planned_squad(
+            season_id, next_gw, squad_json, source="user_override",
+        )
+        return {"status": "transfers_made", "planned_squad": squad_json}
+
     def undo_transfers(self, manager_id: int) -> dict:
         """Reset the planned squad to the original recommendation."""
         season, err = self._require_ready_phase(manager_id)

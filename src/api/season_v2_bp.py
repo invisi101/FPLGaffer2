@@ -133,6 +133,31 @@ def api_v2_make_transfer():
     return jsonify(result)
 
 
+@season_v2_bp.route("/make-transfers", methods=["POST"])
+def api_v2_make_transfers():
+    body = request.get_json(silent=True) or {}
+    manager_id, err = require_manager_id(body, "body")
+    if err:
+        return jsonify(err[0]), err[1]
+
+    players_out = body.get("players_out")
+    players_in = body.get("players_in")
+    if not players_out or not players_in:
+        return jsonify({"error": "players_out and players_in are required."}), 400
+
+    try:
+        players_out = [int(x) for x in players_out]
+        players_in = [int(x) for x in players_in]
+    except (TypeError, ValueError):
+        return jsonify({"error": "players_out and players_in must be lists of integers."}), 400
+
+    mgr = _get_mgr()
+    result = mgr.make_transfers(manager_id, players_out, players_in)
+    if "error" in result:
+        return jsonify(result), 400
+    return jsonify(result)
+
+
 @season_v2_bp.route("/undo-transfers", methods=["POST"])
 def api_v2_undo_transfers():
     body = request.get_json(silent=True) or {}

@@ -1965,6 +1965,47 @@
   }
   .modal-squad-player:hover { background: rgba(248, 113, 113, 0.1); }
   .modal-squad-player.selected { background: rgba(248, 113, 113, 0.15); border: 1px solid var(--red); }
+  .modal-squad-player.selected-out { background: rgba(248, 113, 113, 0.15); border: 1px solid var(--red); }
+
+  /* Multi-transfer modal */
+  .mt-steps { display: flex; gap: 4px; margin-bottom: 14px; }
+  .mt-step {
+    flex: 1; text-align: center; padding: 6px 0; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.5px; border-radius: 6px; background: var(--surface2); color: var(--text2);
+  }
+  .mt-step.active { background: var(--accent); color: #fff; }
+  .mt-step.done { background: var(--green); color: #fff; }
+  .mt-budget-bar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; background: var(--surface2); border-radius: 6px;
+    font-size: 13px; margin-bottom: 10px;
+  }
+  .mt-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .mt-chip {
+    padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .mt-chip.out { background: rgba(248, 113, 113, 0.15); color: var(--red); border: 1px solid var(--red); }
+  .mt-chip.in { background: rgba(45, 212, 160, 0.15); color: var(--green); border: 1px solid var(--green); }
+  .mt-player-list { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; }
+  .mt-pos-pills { display: flex; gap: 6px; margin-bottom: 10px; }
+  .mt-pos-pill {
+    padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;
+    background: var(--surface2); color: var(--text2); border: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .mt-pos-pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .mt-confirm-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+  .mt-confirm-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    background: var(--surface2); border-radius: 8px; font-size: 13px;
+  }
+  .mt-confirm-player { display: flex; align-items: center; gap: 6px; flex: 1; }
+  .mt-confirm-player.out { color: var(--red); }
+  .mt-confirm-player.in { color: var(--green); }
+  .mt-confirm-summary {
+    display: flex; gap: 16px; padding: 10px 12px; background: var(--surface2);
+    border-radius: 8px; font-size: 13px;
+  }
 
   .captain-picker {
     display: grid;
@@ -2529,6 +2570,7 @@
   <div class="tab" data-view="pltable" onclick="switchTab(this)">📊 PL Table</div>
   <div class="tab" data-view="gwscores" onclick="switchTab(this)">⚽ GW Scores</div>
   <div class="tab" data-view="teamform" onclick="switchTab(this)">📈 Form</div>
+  <div class="tab" data-view="prices" onclick="switchTab(this)">💰 Prices</div>
   <div class="tab" data-view="players" onclick="switchTab(this)">🔮 Players</div>
   <div class="tab" data-view="monsters" onclick="switchTab(this)">👹 Monsters</div>
   <div class="tab" data-view="season" onclick="switchTab(this)">📅 Season</div>
@@ -2764,6 +2806,25 @@
     </div>
     <div class="empty-state"><p>Loading teams...</p></div>
   </div>
+</div>
+
+<!-- Prices Panel -->
+<div class="content" id="pricesPanel" style="display:none">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h2>Price Tracker</h2>
+    <button class="btn btn-primary" onclick="updatePrices()">Update Prices</button>
+  </div>
+  <div id="priceAlertsContainer"></div>
+  <h3 style="margin-top:20px">Squad Prices</h3>
+  <div id="priceTableContainer"></div>
+  <h3 style="margin-top:20px">Price Predictions</h3>
+  <div id="pricePredictionsDisplay"></div>
+  <h3 style="margin-top:20px">Watchlist</h3>
+  <div style="position:relative;margin-bottom:12px">
+    <input id="watchlistSearch" type="text" placeholder="Search player to add..." oninput="debounceWatchlistSearch()" style="width:100%;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+    <div id="watchlistDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:6px;max-height:200px;overflow-y:auto;z-index:100"></div>
+  </div>
+  <div id="watchlistContainer"></div>
 </div>
 
 <!-- Players Panel -->
@@ -3576,6 +3637,14 @@ function switchTab(tab) {
     teamFormPanel.classList.remove('visible');
   }
 
+  const pricesPanel = document.getElementById('pricesPanel');
+  if (view === 'prices') {
+    pricesPanel.style.display = 'block';
+    loadPrices();
+  } else {
+    pricesPanel.style.display = 'none';
+  }
+
   const playersPanel = document.getElementById('playersPanel');
   if (view === 'players') {
     playersPanel.classList.add('visible');
@@ -4214,7 +4283,8 @@ function renderTransfers(d) {
 
 let _seasonV2PollTimer = null;
 let _seasonV2StatusCache = null;
-let _transferModalState = null; // {selectedOut: player, phase: 'pick_out'|'pick_in'}
+let _transferModalState = null;
+let _multiTransferState = null; // {phase:'sell'|'buy'|'confirm', playersOut:[], playersIn:[], allCandidates:[], buyingPosition:null}
 
 function getSeasonManagerId() {
   return document.getElementById('seasonManagerId').value || localStorage.getItem('fpl_manager_id') || '';
@@ -4441,7 +4511,7 @@ function renderReadyPhase(el, data) {
   // Transfer action buttons
   html += `<div class="action-buttons">
     <button class="btn btn-primary" onclick="acceptTransfersV2()">Accept Recommendations</button>
-    <button class="btn" onclick="openTransferModal()">Make My Own Transfers</button>
+    <button class="btn" onclick="openMultiTransferModal()">Make My Own Transfers</button>
     ${source === 'user_override' ? '<button class="btn" onclick="undoTransfersV2()">Reset to Recommendations</button>' : ''}
   </div>`;
   html += '</div>';
@@ -4489,7 +4559,11 @@ function renderReadyPhase(el, data) {
   if (bench.length) {
     html += '<h4 style="margin-top:12px;font-size:12px;color:var(--text2);text-transform:uppercase">Bench</h4>';
     html += '<div class="squad-grid">';
-    bench.sort((a, b) => (posOrder[a.position] || 9) - (posOrder[b.position] || 9));
+    bench.sort((a, b) => {
+      if (a.position === 'GKP' && b.position !== 'GKP') return -1;
+      if (a.position !== 'GKP' && b.position === 'GKP') return 1;
+      return (b.predicted_next_gw_points || 0) - (a.predicted_next_gw_points || 0);
+    });
     bench.forEach(p => {
       html += `<div class="squad-player">
         <div class="sp-name">${p.web_name || '?'}</div>
@@ -4498,6 +4572,59 @@ function renderReadyPhase(el, data) {
       </div>`;
     });
     html += '</div>';
+  }
+  html += '</div>';
+
+  // --- Pitch visualization ---
+  html += '<div class="ready-section">';
+  html += '<h4><span class="section-icon">&#x26BD;</span> Pitch View</h4>';
+  const fwd = starters.filter(p => p.position === 'FWD');
+  const mid = starters.filter(p => p.position === 'MID');
+  const def_ = starters.filter(p => p.position === 'DEF');
+  const gkp = starters.filter(p => p.position === 'GKP');
+  function readyPitchCard(p) {
+    let pts;
+    if (p.predicted_next_gw_points != null) {
+      let rawPred = Number(p.predicted_next_gw_points);
+      if (p.is_captain || p.player_id === captainId) rawPred *= 2;
+      pts = rawPred.toFixed(1);
+    } else { pts = '-'; }
+    let badge = '';
+    let cardStyle = '';
+    if (p.is_captain || p.player_id === captainId) {
+      cardStyle = 'border:2px solid #ef4444;box-shadow:0 0 8px rgba(239,68,68,0.4)';
+      badge = ' <span class="captain-badge">(C)</span>';
+    } else if (p.is_vice_captain || p.player_id === sq.vice_captain_id) {
+      badge = ' <span class="vc-badge">(V)</span>';
+    }
+    return `<div class="pitch-card" style="${cardStyle}">
+      <div class="p-name">${p.web_name || '-'}${badge}</div>
+      <div class="p-team">${p.team || ''} &middot; ${p.cost != null ? Number(p.cost).toFixed(1) + 'm' : ''}</div>
+      <div class="p-pts" style="color:var(--green)">${pts}</div>
+    </div>`;
+  }
+  html += `<div class="pitch">
+    <div class="pitch-bottom-box"></div>
+    <div class="pitch-row fwd">${fwd.map(p => readyPitchCard(p)).join('')}</div>
+    <div class="pitch-row mid">${mid.map(p => readyPitchCard(p)).join('')}</div>
+    <div class="pitch-row def">${def_.map(p => readyPitchCard(p)).join('')}</div>
+    <div class="pitch-row gkp">${gkp.map(p => readyPitchCard(p)).join('')}</div>
+  </div>`;
+  if (bench.length) {
+    const benchSorted = [...bench].sort((a, b) => {
+      if (a.position === 'GKP' && b.position !== 'GKP') return -1;
+      if (a.position !== 'GKP' && b.position === 'GKP') return 1;
+      return (b.predicted_next_gw_points || 0) - (a.predicted_next_gw_points || 0);
+    });
+    html += `<div class="bench-area"><div class="bench-label">Bench</div>
+      <div class="bench-row">${benchSorted.map(p => {
+        const pred = p.predicted_next_gw_points != null ? Number(p.predicted_next_gw_points).toFixed(1) : '-';
+        return `<div class="bench-card">
+          <div class="p-name">${p.web_name || '-'}</div>
+          <div class="p-team">${p.team || ''} &middot; ${p.cost != null ? Number(p.cost).toFixed(1) + 'm' : ''}</div>
+          <div class="p-pts" style="font-size:13px">${pred}</div>
+        </div>`;
+      }).join('')}</div></div>`;
   }
   html += '</div>';
 
@@ -4655,50 +4782,82 @@ async function toggleChipV2(chipName) {
   } catch(e) { alert('Error: ' + e.message); }
 }
 
-// --- Transfer Override Modal ---
-function openTransferModal() {
+// --- Multi-Transfer Modal ---
+function openMultiTransferModal() {
   const ps = _seasonV2StatusCache?.planned_squad;
   if (!ps || !ps.squad_json) { alert('No planned squad data.'); return; }
-
-  _transferModalState = { phase: 'pick_out', selectedOut: null };
-  renderTransferModal();
+  _multiTransferState = { phase: 'sell', playersOut: [], playersIn: [], allCandidates: [], buyingPosition: null };
+  renderMultiTransferModal();
 }
 
-function closeTransferModal() {
-  _transferModalState = null;
+function closeMultiTransferModal() {
+  _multiTransferState = null;
   const overlay = document.getElementById('transferModalOverlay');
   if (overlay) overlay.remove();
 }
 
-function renderTransferModal() {
-  // Remove existing
+function renderMultiTransferModal() {
   let overlay = document.getElementById('transferModalOverlay');
   if (overlay) overlay.remove();
 
   const ps = _seasonV2StatusCache?.planned_squad;
   if (!ps || !ps.squad_json) return;
+  const st = _multiTransferState;
+  if (!st) return;
 
   const sq = ps.squad_json;
   const players = sq.players || [];
+  const bank = sq.bank || 0;
   const posOrder = {GKP: 0, DEF: 1, MID: 2, FWD: 3};
 
   overlay = document.createElement('div');
   overlay.id = 'transferModalOverlay';
   overlay.className = 'transfer-modal-overlay';
-  overlay.onclick = function(e) { if (e.target === overlay) closeTransferModal(); };
+  overlay.onclick = function(e) { if (e.target === overlay) closeMultiTransferModal(); };
 
-  let html = `<div class="transfer-modal">
+  // Step indicator
+  const steps = ['SELL', 'BUY', 'CONFIRM'];
+  const phaseIdx = {sell: 0, buy: 1, confirm: 2}[st.phase];
+  let stepHtml = '<div class="mt-steps">';
+  steps.forEach((s, i) => {
+    const cls = i === phaseIdx ? 'mt-step active' : i < phaseIdx ? 'mt-step done' : 'mt-step';
+    stepHtml += `<div class="${cls}">${s}</div>`;
+  });
+  stepHtml += '</div>';
+
+  let html = `<div class="transfer-modal" style="max-width:560px">
     <div class="transfer-modal-header">
-      <h3>Make a Transfer</h3>
-      <button class="transfer-modal-close" onclick="closeTransferModal()">&times;</button>
+      <h3>Make Transfers</h3>
+      <button class="transfer-modal-close" onclick="closeMultiTransferModal()">&times;</button>
     </div>
-    <div class="transfer-modal-body">`;
+    <div class="transfer-modal-body">
+    ${stepHtml}`;
 
-  if (_transferModalState.phase === 'pick_out') {
-    html += '<div class="transfer-modal-step"><h4>Step 1: Select player to transfer out</h4>';
+  if (st.phase === 'sell') {
+    // Budget bar
+    const salesVal = st.playersOut.reduce((s, p) => s + (p.cost || 0), 0);
+    const afterSales = round1(bank + salesVal);
+    html += `<div class="mt-budget-bar">
+      <span>Bank: <strong>${bank.toFixed(1)}m</strong></span>
+      <span>After sales: <strong style="color:var(--green)">${afterSales.toFixed(1)}m</strong></span>
+    </div>`;
+
+    // Selected chips
+    if (st.playersOut.length) {
+      html += '<div class="mt-chips">';
+      st.playersOut.forEach(p => {
+        html += `<span class="mt-chip out" onclick="toggleSellPlayer(${p.player_id})">${p.web_name} &times;</span>`;
+      });
+      html += '</div>';
+    }
+
+    // Player list
+    html += '<div class="mt-player-list">';
+    const outIds = new Set(st.playersOut.map(p => p.player_id));
     const sorted = [...players].sort((a, b) => (posOrder[a.position] || 9) - (posOrder[b.position] || 9));
     sorted.forEach(p => {
-      html += `<div class="modal-squad-player" onclick="selectTransferOut(${p.player_id})">
+      const sel = outIds.has(p.player_id);
+      html += `<div class="modal-squad-player ${sel ? 'selected-out' : ''}" onclick="toggleSellPlayer(${p.player_id})">
         <div>
           <span style="font-weight:600">${p.web_name || '?'}</span>
           <span class="pos-tag ${p.position}" style="margin-left:6px">${p.position || ''}</span>
@@ -4710,67 +4869,219 @@ function renderTransferModal() {
       </div>`;
     });
     html += '</div>';
-  } else if (_transferModalState.phase === 'pick_in') {
-    const outPlayer = _transferModalState.selectedOut;
-    html += `<div class="transfer-modal-step">
-      <h4>Transferring out: <span style="color:var(--red)">${outPlayer.web_name}</span> (${outPlayer.position})</h4>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Select replacement below. Showing ${outPlayer.position} players within budget.</div>
-      <input type="text" class="search-box" placeholder="Search player..." oninput="filterTransferIn(this.value)" style="width:100%;margin-bottom:8px" id="transferInSearch">
-      <div class="available-player-list" id="transferInList">
-        <div style="padding:12px;color:var(--text2);text-align:center">Loading players...</div>
-      </div>
+
+    html += `<div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeMultiTransferModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="mtGoToBuy()" ${st.playersOut.length < 1 ? 'disabled style="opacity:0.5"' : ''}>Next</button>
+    </div>`;
+
+  } else if (st.phase === 'buy') {
+    // Calculate position needs
+    const posNeeds = {};
+    st.playersOut.forEach(p => { posNeeds[p.position] = (posNeeds[p.position] || 0) + 1; });
+    st.playersIn.forEach(p => { posNeeds[p.position] = (posNeeds[p.position] || 0) - 1; });
+    // Remove filled positions
+    Object.keys(posNeeds).forEach(k => { if (posNeeds[k] <= 0) delete posNeeds[k]; });
+
+    const salesVal = st.playersOut.reduce((s, p) => s + (p.cost || 0), 0);
+    const spentVal = st.playersIn.reduce((s, p) => s + (p.cost || 0), 0);
+    const available = round1(bank + salesVal - spentVal);
+
+    html += `<div class="mt-budget-bar">
+      <span>Available: <strong style="color:var(--green)">${available.toFixed(1)}m</strong></span>
+      <span>Spent: <strong>${spentVal.toFixed(1)}m</strong></span>
+    </div>`;
+
+    // Bought chips
+    if (st.playersIn.length) {
+      html += '<div class="mt-chips">';
+      st.playersIn.forEach(p => {
+        html += `<span class="mt-chip in">${p.web_name}</span>`;
+      });
+      html += '</div>';
+    }
+
+    // Position need pills
+    const allNeededPos = Object.keys(posNeeds);
+    if (allNeededPos.length) {
+      const curBuyPos = st.buyingPosition || allNeededPos[0];
+      html += '<div class="mt-pos-pills">';
+      allNeededPos.forEach(pos => {
+        const count = posNeeds[pos];
+        const active = pos === curBuyPos ? ' active' : '';
+        html += `<button class="mt-pos-pill${active}" onclick="mtSetBuyPosition('${pos}')">${pos} x${count}</button>`;
+      });
+      html += '</div>';
+
+      // Search + player list
+      html += `<input type="text" class="search-box" placeholder="Search player..." oninput="mtFilterBuyCandidates(this.value)" style="width:100%;margin-bottom:8px" id="mtBuySearch">`;
+      html += '<div class="available-player-list" id="mtBuyList"><div style="padding:12px;color:var(--text2);text-align:center">Loading players...</div></div>';
+    } else {
+      html += '<div style="padding:16px;text-align:center;color:var(--green);font-weight:600">All positions filled! Proceed to confirm.</div>';
+    }
+
+    html += `<div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeMultiTransferModal()">Cancel</button>
+      <button class="btn" onclick="mtBackToSell()">Back</button>
+      ${!allNeededPos.length ? '<button class="btn btn-primary" onclick="mtGoToConfirm()">Next</button>' : ''}
+    </div>`;
+
+  } else if (st.phase === 'confirm') {
+    const salesVal = st.playersOut.reduce((s, p) => s + (p.cost || 0), 0);
+    const spentVal = st.playersIn.reduce((s, p) => s + (p.cost || 0), 0);
+    const newBank = round1(bank + salesVal - spentVal);
+    const freeFTs = sq.free_transfers || 1;
+    const existingTransfers = (sq.transfers_in || []).length;
+    const totalTransfers = existingTransfers + st.playersOut.length;
+    const hits = Math.max(0, totalTransfers - freeFTs);
+
+    html += '<div class="mt-confirm-list">';
+    // Match by position for display
+    const outByPos = {};
+    st.playersOut.forEach(p => { (outByPos[p.position] = outByPos[p.position] || []).push(p); });
+    const inByPos = {};
+    st.playersIn.forEach(p => { (inByPos[p.position] = inByPos[p.position] || []).push(p); });
+
+    Object.keys(outByPos).forEach(pos => {
+      const outs = outByPos[pos] || [];
+      const ins = inByPos[pos] || [];
+      for (let i = 0; i < outs.length; i++) {
+        const pOut = outs[i] || {};
+        const pIn = ins[i] || {};
+        html += `<div class="mt-confirm-row">
+          <div class="mt-confirm-player out">
+            <span class="pos-tag ${pos}">${pos}</span>
+            <span>${pOut.web_name || '?'}</span>
+            <span style="color:var(--text2)">${(pOut.cost || 0).toFixed(1)}m</span>
+          </div>
+          <span class="transfer-arrow">&rarr;</span>
+          <div class="mt-confirm-player in">
+            <span>${pIn.web_name || '?'}</span>
+            <span style="color:var(--text2)">${(pIn.cost || 0).toFixed(1)}m</span>
+          </div>
+        </div>`;
+      }
+    });
+    html += '</div>';
+
+    html += `<div class="mt-confirm-summary">
+      <div>Net cost: <strong>${(spentVal - salesVal) > 0 ? '+' : ''}${round1(spentVal - salesVal).toFixed(1)}m</strong></div>
+      <div>New bank: <strong style="color:var(--green)">${newBank.toFixed(1)}m</strong></div>
+      ${hits > 0 ? `<div style="color:var(--red)">Hits: <strong>${hits} (-${hits * 4}pts)</strong></div>` : ''}
+    </div>`;
+
+    html += `<div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeMultiTransferModal()">Cancel</button>
+      <button class="btn" onclick="mtBackToBuy()">Back</button>
+      <button class="btn btn-primary" onclick="mtConfirmTransfers()" id="mtConfirmBtn">Confirm Transfers</button>
     </div>`;
   }
 
-  html += `<div style="margin-top:12px;display:flex;gap:8px">
-    <button class="btn" onclick="closeTransferModal()">Cancel</button>
-    ${_transferModalState.phase === 'pick_in' ? '<button class="btn" onclick="backToPickOut()">Back</button>' : ''}
-  </div>`;
   html += '</div></div>';
-
   overlay.innerHTML = html;
   document.body.appendChild(overlay);
 
-  // If in pick_in phase, load available players
-  if (_transferModalState.phase === 'pick_in') {
-    loadAvailablePlayersForTransfer();
+  // Load buy candidates if in buy phase with unfilled positions
+  if (st.phase === 'buy') {
+    const posNeeds = {};
+    st.playersOut.forEach(p => { posNeeds[p.position] = (posNeeds[p.position] || 0) + 1; });
+    st.playersIn.forEach(p => { posNeeds[p.position] = (posNeeds[p.position] || 0) - 1; });
+    Object.keys(posNeeds).forEach(k => { if (posNeeds[k] <= 0) delete posNeeds[k]; });
+    if (Object.keys(posNeeds).length) {
+      const pos = st.buyingPosition || Object.keys(posNeeds)[0];
+      if (!st.buyingPosition) st.buyingPosition = pos;
+      mtLoadBuyCandidates(pos);
+    }
   }
 }
 
-function selectTransferOut(playerId) {
-  const ps = _seasonV2StatusCache?.planned_squad;
-  if (!ps || !ps.squad_json) return;
+function round1(n) { return Math.round(n * 10) / 10; }
 
-  const player = (ps.squad_json.players || []).find(p => p.player_id === playerId);
-  if (!player) return;
-
-  _transferModalState.selectedOut = player;
-  _transferModalState.phase = 'pick_in';
-  renderTransferModal();
+function toggleSellPlayer(playerId) {
+  const st = _multiTransferState;
+  if (!st) return;
+  const idx = st.playersOut.findIndex(p => p.player_id === playerId);
+  if (idx >= 0) {
+    st.playersOut.splice(idx, 1);
+  } else {
+    const ps = _seasonV2StatusCache?.planned_squad;
+    if (!ps || !ps.squad_json) return;
+    const player = (ps.squad_json.players || []).find(p => p.player_id === playerId);
+    if (player) st.playersOut.push({...player});
+  }
+  // Reset buy state when sell changes
+  st.playersIn = [];
+  st.buyingPosition = null;
+  renderMultiTransferModal();
 }
 
-function backToPickOut() {
-  _transferModalState.phase = 'pick_out';
-  _transferModalState.selectedOut = null;
-  renderTransferModal();
+function mtGoToBuy() {
+  const st = _multiTransferState;
+  if (!st || st.playersOut.length < 1) return;
+  st.phase = 'buy';
+  st.playersIn = [];
+  st.buyingPosition = null;
+  renderMultiTransferModal();
 }
 
-async function loadAvailablePlayersForTransfer() {
-  const outPlayer = _transferModalState?.selectedOut;
-  if (!outPlayer) return;
+function mtBackToSell() {
+  const st = _multiTransferState;
+  if (!st) return;
+  st.phase = 'sell';
+  st.playersIn = [];
+  st.buyingPosition = null;
+  renderMultiTransferModal();
+}
+
+function mtBackToBuy() {
+  const st = _multiTransferState;
+  if (!st) return;
+  st.phase = 'buy';
+  renderMultiTransferModal();
+}
+
+function mtGoToConfirm() {
+  const st = _multiTransferState;
+  if (!st) return;
+  st.phase = 'confirm';
+  renderMultiTransferModal();
+}
+
+function mtSetBuyPosition(pos) {
+  const st = _multiTransferState;
+  if (!st) return;
+  st.buyingPosition = pos;
+  renderMultiTransferModal();
+}
+
+async function mtLoadBuyCandidates(position) {
+  const st = _multiTransferState;
+  if (!st) return;
 
   const ps = _seasonV2StatusCache?.planned_squad;
   if (!ps || !ps.squad_json) return;
-
   const sq = ps.squad_json;
-  const currentIds = new Set((sq.players || []).map(p => p.player_id));
-  const position = outPlayer.position;
-  const budget = (sq.bank || 0) + (outPlayer.cost || 0);
 
-  // Count team occurrences (excluding the outgoing player)
+  // Current squad IDs minus sells plus buys
+  const outIds = new Set(st.playersOut.map(p => p.player_id));
+  const inIds = new Set(st.playersIn.map(p => p.player_id));
+  const currentIds = new Set((sq.players || []).filter(p => !outIds.has(p.player_id)).map(p => p.player_id));
+  inIds.forEach(id => currentIds.add(id));
+
+  // Budget
+  const bank = sq.bank || 0;
+  const salesVal = st.playersOut.reduce((s, p) => s + (p.cost || 0), 0);
+  const spentVal = st.playersIn.reduce((s, p) => s + (p.cost || 0), 0);
+  const available = round1(bank + salesVal - spentVal);
+
+  // Team counts (remaining + bought)
   const teamCounts = {};
   (sq.players || []).forEach(p => {
-    if (p.player_id === outPlayer.player_id) return;
+    if (outIds.has(p.player_id)) return;
+    const tc = p.team_code || 0;
+    teamCounts[tc] = (teamCounts[tc] || 0) + 1;
+  });
+  st.playersIn.forEach(p => {
     const tc = p.team_code || 0;
     teamCounts[tc] = (teamCounts[tc] || 0) + 1;
   });
@@ -4783,37 +5094,32 @@ async function loadAvailablePlayersForTransfer() {
     let candidates = allPlayers.filter(p => {
       if (currentIds.has(p.player_id)) return false;
       if (p.position !== position) return false;
-      if (p.cost > budget) return false;
-      // Max 3 per team
+      if (p.cost > available) return false;
       const tc = p.team_code || 0;
       if ((teamCounts[tc] || 0) >= 3) return false;
       return true;
     });
 
-    // Sort by predicted points
     candidates.sort((a, b) => (b.predicted_next_gw_points || 0) - (a.predicted_next_gw_points || 0));
     candidates = candidates.slice(0, 50);
-
-    _transferModalState._candidates = candidates;
-    renderTransferInList(candidates);
+    st.allCandidates = candidates;
+    mtRenderBuyList(candidates);
   } catch(e) {
-    const list = document.getElementById('transferInList');
+    const list = document.getElementById('mtBuyList');
     if (list) list.innerHTML = '<div style="padding:12px;color:var(--red)">Error loading players</div>';
   }
 }
 
-function renderTransferInList(candidates) {
-  const list = document.getElementById('transferInList');
+function mtRenderBuyList(candidates) {
+  const list = document.getElementById('mtBuyList');
   if (!list) return;
-
   if (!candidates.length) {
     list.innerHTML = '<div style="padding:12px;color:var(--text2)">No available players found</div>';
     return;
   }
-
   let html = '';
   candidates.forEach(p => {
-    html += `<div class="available-player-row" onclick="executeTransferIn(${p.player_id})">
+    html += `<div class="available-player-row" onclick="mtSelectBuyPlayer(${p.player_id})">
       <div>
         <div class="apr-name">${p.web_name || '?'}</div>
         <div class="apr-meta">${p.position || ''} &middot; ${p.team || ''} &middot; ${p.cost != null ? Number(p.cost).toFixed(1) + 'm' : ''}</div>
@@ -4824,38 +5130,65 @@ function renderTransferInList(candidates) {
   list.innerHTML = html;
 }
 
-function filterTransferIn(query) {
-  const candidates = _transferModalState?._candidates || [];
-  if (!query) {
-    renderTransferInList(candidates);
-    return;
-  }
+function mtFilterBuyCandidates(query) {
+  const st = _multiTransferState;
+  if (!st) return;
+  const candidates = st.allCandidates || [];
+  if (!query) { mtRenderBuyList(candidates); return; }
   const q = query.toLowerCase();
-  const filtered = candidates.filter(p => (p.web_name || '').toLowerCase().includes(q));
-  renderTransferInList(filtered);
+  mtRenderBuyList(candidates.filter(p => (p.web_name || '').toLowerCase().includes(q)));
 }
 
-async function executeTransferIn(playerInId) {
-  const outPlayer = _transferModalState?.selectedOut;
-  if (!outPlayer) return;
+function mtSelectBuyPlayer(playerId) {
+  const st = _multiTransferState;
+  if (!st) return;
+  const player = (st.allCandidates || []).find(p => p.player_id === playerId);
+  if (!player) return;
+  st.playersIn.push({...player});
+
+  // Check if all positions filled
+  const posNeeds = {};
+  st.playersOut.forEach(p => { posNeeds[p.position] = (posNeeds[p.position] || 0) + 1; });
+  st.playersIn.forEach(p => { posNeeds[p.position] = (posNeeds[p.position] || 0) - 1; });
+  Object.keys(posNeeds).forEach(k => { if (posNeeds[k] <= 0) delete posNeeds[k]; });
+
+  if (!Object.keys(posNeeds).length) {
+    st.phase = 'confirm';
+    st.buyingPosition = null;
+  } else {
+    // Move to next unfilled position
+    st.buyingPosition = Object.keys(posNeeds)[0];
+  }
+  renderMultiTransferModal();
+}
+
+async function mtConfirmTransfers() {
+  const st = _multiTransferState;
+  if (!st) return;
   const mid = getSeasonManagerId();
   if (!mid) return;
 
+  const btn = document.getElementById('mtConfirmBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Processing...'; }
+
   try {
-    const resp = await fetch('/api/v2/season/make-transfer', {
+    const resp = await fetch('/api/v2/season/make-transfers', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         manager_id: parseInt(mid),
-        player_out_id: outPlayer.player_id,
-        player_in_id: playerInId,
+        players_out: st.playersOut.map(p => p.player_id),
+        players_in: st.playersIn.map(p => p.player_id),
       }),
     });
     const d = await resp.json();
-    if (d.error) { alert(d.error); return; }
-    closeTransferModal();
+    if (d.error) { alert(d.error); if (btn) { btn.disabled = false; btn.textContent = 'Confirm Transfers'; } return; }
+    closeMultiTransferModal();
     loadSeasonV2();
-  } catch(e) { alert('Error: ' + e.message); }
+  } catch(e) {
+    alert('Error: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm Transfers'; }
+  }
 }
 
 // --- Phase: LIVE ---
