@@ -336,7 +336,7 @@ def test_all_modules_import():
         "src.strategy.captain_planner", "src.strategy.plan_synthesizer",
         "src.strategy.reactive", "src.strategy.price_tracker",
         "src.season.manager", "src.season.manager_v2", "src.season.state_machine",
-        "src.season.recorder", "src.season.dashboard",
+        "src.season.scheduler", "src.season.recorder", "src.season.dashboard",
         "src.season.fixtures", "src.season.preseason",
         "src.db.connection", "src.db.schema", "src.db.migrations",
         "src.db.repositories",

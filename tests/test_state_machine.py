@@ -1110,3 +1110,39 @@ class TestInitSeason:
         mgr = SeasonManagerV2(db_path=db_path)
         assert hasattr(mgr, "_track_prices_simple")
         assert callable(mgr._track_prices_simple)
+
+
+class TestScheduler:
+    """Tests for src.season.scheduler."""
+
+    def test_start_and_stop(self, tmp_path):
+        """Scheduler thread starts and stops without error."""
+        from src.season import scheduler
+
+        # Ensure clean state
+        scheduler.stop_scheduler()
+        scheduler._stop_event.clear()
+        scheduler._scheduler_thread = None
+
+        db_path = tmp_path / "sched_test.db"
+        # Use a very long interval so the loop only runs once (or never)
+        scheduler.start_scheduler(
+            manager_id=99999, db_path=db_path, interval_seconds=9999,
+        )
+        assert scheduler._scheduler_thread is not None
+        assert scheduler._scheduler_thread.is_alive()
+
+        # Calling start again is a no-op (idempotent)
+        scheduler.start_scheduler(
+            manager_id=99999, db_path=db_path, interval_seconds=9999,
+        )
+
+        scheduler.stop_scheduler()
+        # Give thread a moment to notice the stop event
+        scheduler._scheduler_thread.join(timeout=2)
+        assert not scheduler._scheduler_thread.is_alive()
+
+    def test_stop_before_start_is_safe(self):
+        """stop_scheduler() is safe to call when nothing is running."""
+        from src.season import scheduler
+        scheduler.stop_scheduler()  # Should not raise

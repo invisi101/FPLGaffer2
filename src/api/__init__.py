@@ -1,5 +1,7 @@
 """Flask application factory."""
 
+import os
+
 from flask import Flask
 
 
@@ -27,5 +29,16 @@ def create_app() -> Flask:
     app.register_blueprint(backtest_bp)
     app.register_blueprint(compare_bp)
     app.register_blueprint(season_v2_bp, url_prefix="/api/v2/season")
+
+    # Start background scheduler if GAFFER_MANAGER_ID is set.
+    manager_id_str = os.environ.get("GAFFER_MANAGER_ID")
+    if manager_id_str:
+        try:
+            from src.paths import DB_PATH
+            from src.season.scheduler import start_scheduler
+
+            start_scheduler(int(manager_id_str), DB_PATH)
+        except (ValueError, TypeError):
+            pass  # Invalid manager_id — skip scheduler
 
     return app
