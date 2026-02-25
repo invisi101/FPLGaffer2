@@ -411,8 +411,8 @@ class TestSeasonManagerV2:
         alerts = mgr.tick(manager_id=99999)
         assert alerts == []
 
-    def test_tick_planning_returns_empty_stub(self, db_path, bootstrap, monkeypatch):
-        """PLANNING tick is a stub -- returns [] for now."""
+    def test_tick_planning_dispatches(self, db_path, bootstrap, monkeypatch):
+        """PLANNING tick dispatches to _tick_planning and returns its alerts."""
         from src.season.manager_v2 import SeasonManagerV2
         from src.db.repositories import SeasonRepository
 
@@ -425,8 +425,12 @@ class TestSeasonManagerV2:
         mgr = SeasonManagerV2(db_path=db_path)
         monkeypatch.setattr(mgr, "_load_fixtures", lambda: [])
 
+        # Mock _tick_planning to verify dispatch without running full pipeline
+        sentinel_alert = [{"type": "test", "message": "mock planning ran"}]
+        monkeypatch.setattr(mgr, "_tick_planning", lambda *a, **kw: sentinel_alert)
+
         alerts = mgr.tick(manager_id=123)
-        assert alerts == []
+        assert alerts == sentinel_alert
 
     def test_tick_ready_detects_injury(self, db_path, bootstrap, monkeypatch):
         """READY tick detects an injured captain and returns a critical alert."""

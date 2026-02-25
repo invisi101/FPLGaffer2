@@ -176,9 +176,478 @@ class SeasonManagerV2:
     # ------------------------------------------------------------------
 
     def _tick_planning(self, manager_id, season, status, progress_fn=None):
-        """Generate predictions and recommendations. (Implemented in Task 13.)"""
-        logger.info("PLANNING phase: recommendation generation not yet implemented")
-        return []
+        """Generate predictions + recommendation, save planned squad, transition to READY."""
+        import numpy as np
+        import pandas as pd
+
+        from src.api.helpers import calculate_free_transfers, resolve_current_squad_event
+        from src.data.fpl_api import (
+            fetch_fpl_api,
+            fetch_manager_entry,
+            fetch_manager_history,
+            fetch_manager_picks,
+        )
+        from src.data.loader import load_all_data
+        from src.features.builder import build_features, get_fixture_context
+        from src.ml.multi_gw import predict_multi_gw
+        from src.ml.prediction import generate_predictions
+        from src.paths import OUTPUT_DIR
+        from src.season.fixtures import save_fixture_calendar
+        from src.strategy.reactive import apply_availability_adjustments
+
+        alerts: list[dict] = []
+        season_id = season["id"]
+        next_gw = status.get("gw")
+
+        def log(msg: str, **kw) -> None:
+            if progress_fn:
+                progress_fn(msg, **kw)
+            logger.info(msg)
+
+        if not next_gw:
+            logger.error("Cannot determine next GW for manager %d", manager_id)
+            return alerts
+
+        # ── 1. Load data + build features + generate predictions ─────────
+        log("Loading data...")
+        data = load_all_data(force=True)
+        df = build_features(data)
+
+        log("Generating predictions...")
+        pred_result = generate_predictions(df, data)
+        players_df = pred_result.get("players")
+        if players_df is None or (hasattr(players_df, "empty") and players_df.empty):
+            logger.error("Prediction generation failed")
+            return alerts
+
+        # Save predictions CSV
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        if hasattr(players_df, "to_csv"):
+            players_df.to_csv(OUTPUT_DIR / "predictions.csv", index=False)
+
+        # ── 2. Fetch current squad (with Free Hit reversion) ─────────────
+        log("Fetching current squad...")
+        bootstrap = load_bootstrap()
+        if not bootstrap:
+            logger.error("Bootstrap data unavailable")
+            return alerts
+
+        entry = fetch_manager_entry(manager_id)
+        if not entry:
+            logger.error("Could not fetch manager entry for %d", manager_id)
+            return alerts
+
+        current_event = entry.get("current_event")
+        if not current_event:
+            logger.error("Manager %d has no current event", manager_id)
+            return alerts
+
+        history = fetch_manager_history(manager_id)
+        if not history:
+            logger.error("Could not fetch history for manager %d", manager_id)
+            return alerts
+
+        # Detect Free Hit reversion
+        squad_event, fh_reverted = resolve_current_squad_event(history, current_event)
+        if fh_reverted:
+            log(f"Free Hit played in GW{current_event} -- using reverted GW{squad_event} squad")
+
+        picks_data = fetch_manager_picks(manager_id, squad_event)
+        if not picks_data:
+            logger.error("Could not fetch picks for GW%d", squad_event)
+            return alerts
+
+        free_transfers = calculate_free_transfers(history)
+
+        elements_map = {el["id"]: el for el in bootstrap.get("elements", [])}
+        id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
+        code_to_short = {t["code"]: t["short_name"] for t in bootstrap.get("teams", [])}
+
+        picks = picks_data.get("picks", [])
+        entry_history = picks_data.get("entry_history", {})
+
+        # ── 3. Calculate budget (CRITICAL: use entry_history value) ──────
+        bank = round(entry_history.get("bank", 0) / 10, 1)
+        current_squad_ids: set[int] = set()
+        current_squad_cost = 0.0
+        for pick in picks:
+            eid = pick.get("element")
+            current_squad_ids.add(eid)
+            el = elements_map.get(eid, {})
+            current_squad_cost += el.get("now_cost", 0) / 10
+
+        api_value = entry_history.get("value")
+        if api_value:
+            total_budget = round(api_value / 10, 1)
+        else:
+            total_budget = round(bank + current_squad_cost, 1)
+
+        # ── 4. Enrich predictions with bootstrap data ────────────────────
+        log("Enriching predictions...")
+        if "position_clean" in players_df.columns and "position" not in players_df.columns:
+            players_df["position"] = players_df["position_clean"]
+        if "cost" not in players_df.columns:
+            players_df["cost"] = None
+        if "team_code" not in players_df.columns:
+            players_df["team_code"] = None
+        if "web_name" not in players_df.columns:
+            players_df["web_name"] = None
+
+        for idx, row in players_df.iterrows():
+            el = elements_map.get(int(row["player_id"])) if pd.notna(row.get("player_id")) else None
+            if el:
+                if pd.isna(row.get("cost")) or row.get("cost") is None:
+                    players_df.at[idx, "cost"] = round(el.get("now_cost", 0) / 10, 1)
+                if pd.isna(row.get("team_code")) or row.get("team_code") is None:
+                    players_df.at[idx, "team_code"] = id_to_code.get(el.get("team"))
+                if pd.isna(row.get("web_name")) or row.get("web_name") is None:
+                    players_df.at[idx, "web_name"] = el.get("web_name", f"ID{el['id']}")
+
+        # Build prediction lookup for enriching player dicts
+        pred_lookup: dict[int, dict] = {}
+        for _, prow in players_df.iterrows():
+            pid = int(prow.get("player_id", 0))
+            if pid:
+                pred_lookup[pid] = {
+                    "predicted_next_gw_points": round(float(prow.get("predicted_next_gw_points") or 0), 2),
+                    "predicted_next_3gw_points": (
+                        round(float(prow["predicted_next_3gw_points"]), 2)
+                        if pd.notna(prow.get("predicted_next_3gw_points"))
+                        else None
+                    ),
+                    "captain_score": round(float(prow.get("captain_score") or 0), 2),
+                }
+
+        # Build opponent map for next GW
+        fixtures_list = self._load_fixtures()
+        opponent_map: dict = {}
+        id_to_short = {t["id"]: t["short_name"] for t in bootstrap.get("teams", [])}
+        for f in fixtures_list:
+            if f.get("event") == next_gw:
+                h_code = id_to_code.get(f.get("team_h"))
+                a_code = id_to_code.get(f.get("team_a"))
+                a_short = id_to_short.get(f.get("team_a"), "?")
+                h_short = id_to_short.get(f.get("team_h"), "?")
+                if h_code is not None:
+                    opponent_map[h_code] = f"{a_short}(H)"
+                if a_code is not None:
+                    opponent_map[a_code] = f"{h_short}(A)"
+
+        # ── 5. Generate multi-GW predictions for planner ─────────────────
+        log("Generating multi-GW predictions...")
+        fixture_context = get_fixture_context(data)
+        latest_gw = pred_result.get("gameweek", next_gw - 1)
+        current_gw_df = df[
+            df["gameweek"] == latest_gw
+        ].drop_duplicates("player_id", keep="first")
+
+        future_predictions = predict_multi_gw(
+            current=current_gw_df,
+            df=df,
+            fixture_context=fixture_context,
+            latest_gw=latest_gw,
+            max_gw=8,
+        )
+
+        # Keep only GWs from next_gw onward
+        if future_predictions:
+            future_predictions = {
+                gw: gw_df for gw, gw_df in future_predictions.items() if gw >= next_gw
+            }
+
+        # Replace GW+1 with the exact predictions from the Predictions tab
+        if future_predictions and next_gw in future_predictions:
+            gw1_cols = ["player_id", "predicted_next_gw_points",
+                        "position", "cost", "team_code", "web_name"]
+            if "captain_score" in players_df.columns:
+                gw1_cols.append("captain_score")
+            available_cols = [c for c in gw1_cols if c in players_df.columns]
+            gw1_from_pred = players_df[available_cols].drop_duplicates("player_id").copy()
+            gw1_from_pred["predicted_points"] = gw1_from_pred["predicted_next_gw_points"]
+            gw1_from_pred["confidence"] = 1.0
+            if "team_code" in gw1_from_pred.columns:
+                gw1_from_pred["team"] = (
+                    gw1_from_pred["team_code"].map(code_to_short).fillna("")
+                )
+            future_predictions[next_gw] = gw1_from_pred
+
+        # Enrich GW+2 onwards with bootstrap data
+        enrich_rows = []
+        for el in bootstrap.get("elements", []):
+            enrich_rows.append({
+                "player_id": el["id"],
+                "web_name": el.get("web_name", "Unknown"),
+                "position": ELEMENT_TYPE_MAP.get(el.get("element_type"), ""),
+                "cost": round(el.get("now_cost", 0) / 10, 1),
+                "team_code": id_to_code.get(el.get("team")),
+            })
+        enrich_df = pd.DataFrame(enrich_rows)
+
+        if future_predictions:
+            for gw in future_predictions:
+                if gw == next_gw:
+                    continue
+                gw_df = future_predictions[gw]
+                merge_cols = [
+                    c for c in enrich_df.columns
+                    if c not in gw_df.columns or c == "player_id"
+                ]
+                gw_df = gw_df.merge(enrich_df[merge_cols], on="player_id", how="left")
+                if "captain_score" not in gw_df.columns:
+                    gw_df["captain_score"] = gw_df["predicted_points"]
+                else:
+                    gw_df["captain_score"] = gw_df["predicted_points"]
+                future_predictions[gw] = gw_df
+
+        # ── 6. Apply availability adjustments ────────────────────────────
+        log("Adjusting for injuries/availability...")
+        if future_predictions:
+            future_predictions = apply_availability_adjustments(
+                future_predictions, bootstrap.get("elements", [])
+            )
+
+        # ── 7. Run MultiWeekPlanner ──────────────────────────────────────
+        transfers_json = "[]"
+        captain_id = None
+        captain_name = None
+        predicted_points = 0.0
+        base_points = 0.0
+        current_xi_points = 0.0
+        new_squad_json = None
+        transfer_result = None
+        used_planner = False
+
+        if future_predictions:
+            log("Planning transfers over 5 GWs...")
+            try:
+                from src.strategy.transfer_planner import MultiWeekPlanner
+
+                fixture_calendar = self.fixtures.get_fixture_calendar(
+                    season_id, from_gw=next_gw
+                )
+
+                planner = MultiWeekPlanner()
+                transfer_plan = planner.plan_transfers(
+                    current_squad_ids=current_squad_ids,
+                    total_budget=total_budget,
+                    free_transfers=free_transfers,
+                    future_predictions=future_predictions,
+                    fixture_calendar=fixture_calendar,
+                    price_alerts=[],
+                    chip_plan=None,
+                )
+
+                # Extract GW+1 from the plan
+                if transfer_plan:
+                    gw1_step = next(
+                        (s for s in transfer_plan if s.get("gw") == next_gw), None
+                    )
+                    if gw1_step is None and transfer_plan:
+                        gw1_step = transfer_plan[0]
+
+                    if gw1_step:
+                        used_planner = True
+                        predicted_points = gw1_step.get("predicted_points", 0)
+                        captain_id = gw1_step.get("captain_id")
+                        if captain_id:
+                            el = elements_map.get(captain_id, {})
+                            captain_name = el.get("web_name", "Unknown")
+
+            except Exception as exc:
+                logger.warning("MultiWeekPlanner failed: %s", exc, exc_info=True)
+                used_planner = False
+
+        # ── 8. Fallback: single-GW MILP solver ──────────────────────────
+        if not used_planner:
+            log("Running single-GW transfer solver (fallback)...")
+            from src.solver.transfers import solve_transfer_milp_with_hits
+
+            target = "predicted_next_gw_points"
+            pool = players_df.dropna(subset=["position", "cost", target]).copy()
+            captain_col = "captain_score" if "captain_score" in pool.columns else None
+
+            transfer_result = solve_transfer_milp_with_hits(
+                pool,
+                current_squad_ids,
+                target,
+                budget=total_budget,
+                free_transfers=free_transfers,
+                max_transfers=min(free_transfers + 2, 5),
+                captain_col=captain_col,
+            )
+
+            if transfer_result:
+                captain_id = transfer_result.get("captain_id")
+                if captain_id:
+                    el = elements_map.get(captain_id, {})
+                    captain_name = el.get("web_name", "Unknown")
+                predicted_points = transfer_result.get("starting_points", 0)
+                base_points = transfer_result.get("starting_points", 0)
+                current_xi_points = transfer_result.get("baseline_points", 0)
+
+        # ── 9. Build enriched squad + transfer list ──────────────────────
+        log("Building recommendation...")
+
+        def _enrich_player(pid: int) -> dict:
+            """Build a rich player dict from bootstrap + predictions."""
+            el = elements_map.get(pid, {})
+            tc = id_to_code.get(el.get("team"))
+            preds = pred_lookup.get(pid, {})
+            return {
+                "player_id": pid,
+                "web_name": el.get("web_name", f"ID{pid}"),
+                "position": ELEMENT_TYPE_MAP.get(el.get("element_type"), ""),
+                "team_code": tc,
+                "team": code_to_short.get(tc, ""),
+                "cost": round(el.get("now_cost", 0) / 10, 1),
+                "predicted_next_gw_points": preds.get("predicted_next_gw_points", 0),
+                "predicted_next_3gw_points": preds.get("predicted_next_3gw_points"),
+                "captain_score": preds.get("captain_score", 0),
+                "opponent": opponent_map.get(tc, ""),
+            }
+
+        if used_planner and gw1_step:
+            # Build transfer pairs from planner
+            transfers = []
+            t_in_list = gw1_step.get("transfers_in", [])
+            t_out_list = gw1_step.get("transfers_out", [])
+            max_len = max(len(t_out_list), len(t_in_list))
+            for i in range(max_len):
+                out_entry = (
+                    _enrich_player(t_out_list[i].get("player_id"))
+                    if i < len(t_out_list) else {}
+                )
+                in_entry = (
+                    _enrich_player(t_in_list[i].get("player_id"))
+                    if i < len(t_in_list) else {}
+                )
+                transfers.append({"out": out_entry, "in": in_entry})
+            transfers_json = json.dumps(transfers)
+
+            # Build enriched squad from planner squad_ids
+            if gw1_step.get("squad_ids"):
+                enriched_squad = [
+                    _enrich_player(pid) for pid in gw1_step["squad_ids"]
+                ]
+                new_squad_json = json.dumps(enriched_squad)
+
+        elif transfer_result:
+            # Build transfer pairs from MILP solver
+            transfers = []
+            out_ids = list(transfer_result.get("transfers_out_ids", set()))
+            in_ids = list(transfer_result.get("transfers_in_ids", set()))
+            max_len = max(len(out_ids), len(in_ids))
+            for i in range(max_len):
+                out_entry = _enrich_player(out_ids[i]) if i < len(out_ids) else {}
+                in_entry = _enrich_player(in_ids[i]) if i < len(in_ids) else {}
+                transfers.append({"out": out_entry, "in": in_entry})
+            transfers_json = json.dumps(transfers)
+
+            # Enrich new squad with full player data
+            enriched_squad = []
+            for p in transfer_result.get("players", []):
+                pid = int(p.get("player_id", 0))
+                el = elements_map.get(pid, {})
+                tc = p.get("team_code") or id_to_code.get(el.get("team"))
+                preds = pred_lookup.get(pid, {})
+                enriched_squad.append({
+                    "player_id": pid,
+                    "web_name": el.get("web_name", str(p.get("web_name", "Unknown"))),
+                    "position": p.get("position", ELEMENT_TYPE_MAP.get(el.get("element_type"), "")),
+                    "team_code": tc,
+                    "team": code_to_short.get(tc, ""),
+                    "cost": round(float(p.get("cost", el.get("now_cost", 0) / 10)), 1),
+                    "predicted_next_gw_points": preds.get(
+                        "predicted_next_gw_points",
+                        round(float(p.get("predicted_next_gw_points", 0)), 2),
+                    ),
+                    "predicted_next_3gw_points": preds.get("predicted_next_3gw_points"),
+                    "captain_score": preds.get(
+                        "captain_score",
+                        round(float(p.get("captain_score", 0)), 2),
+                    ),
+                    "starter": bool(p.get("starter", False)),
+                    "is_captain": pid == captain_id if captain_id else False,
+                    "is_vice_captain": False,
+                    "opponent": opponent_map.get(tc, ""),
+                })
+
+            # Set vice captain
+            vc_candidates = [
+                p for p in enriched_squad if p["starter"] and not p["is_captain"]
+            ]
+            if vc_candidates:
+                vc_candidates.sort(
+                    key=lambda p: p.get("captain_score", 0), reverse=True
+                )
+                vc_candidates[0]["is_vice_captain"] = True
+            new_squad_json = json.dumps(enriched_squad)
+
+        # ── 10. Save recommendation to DB ────────────────────────────────
+        log("Saving recommendation...")
+        hits = 0
+        if transfer_result:
+            hits = transfer_result.get("hits", 0)
+        elif used_planner and gw1_step:
+            hits = gw1_step.get("hits", 0)
+
+        self.recommendations.save_recommendation(
+            season_id=season_id,
+            gameweek=next_gw,
+            transfers_json=transfers_json,
+            captain_id=captain_id,
+            captain_name=captain_name,
+            chip_suggestion=None,
+            chip_values_json="{}",
+            bank_analysis_json="{}",
+            new_squad_json=new_squad_json,
+            predicted_points=predicted_points,
+            base_points=base_points,
+            current_xi_points=current_xi_points,
+            free_transfers=free_transfers,
+        )
+
+        # ── 11. Build planned squad JSON and save ────────────────────────
+        squad_json = self._build_planned_squad(
+            new_squad_json=new_squad_json,
+            captain_id=captain_id,
+            bank=bank,
+            free_transfers=free_transfers,
+            transfers_json=transfers_json,
+            hits=hits,
+            predicted_points=predicted_points,
+        )
+
+        self.planned_squads.save_planned_squad(
+            season_id, next_gw, squad_json, source="recommended",
+        )
+
+        # ── 12. Update fixture calendar + track prices ───────────────────
+        log("Updating fixtures and prices...")
+        if bootstrap and fixtures_list:
+            try:
+                save_fixture_calendar(
+                    season_id, bootstrap, fixtures_list, self.fixtures,
+                )
+            except Exception as exc:
+                logger.warning("Fixture calendar update failed: %s", exc)
+
+        self._track_prices_simple(season_id, manager_id, bootstrap)
+        self.seasons.update_season_gw(season_id, current_event)
+
+        # ── 13. Transition to READY ──────────────────────────────────────
+        self.seasons.update_phase(season_id, GWPhase.READY.value)
+        log("Recommendation complete.")
+
+        alerts.append({
+            "type": "recommendation_ready",
+            "message": (
+                f"GW{next_gw} recommendation ready: "
+                f"{captain_name or 'TBD'} (C), "
+                f"{round(predicted_points, 1)} predicted pts"
+            ),
+        })
+        return alerts
 
     def _tick_ready(self, manager_id, season, status):
         """Check for injuries in the planned squad.
@@ -504,6 +973,81 @@ class SeasonManagerV2:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _build_planned_squad(
+        self,
+        new_squad_json: str | None,
+        captain_id: int | None,
+        bank: float,
+        free_transfers: int,
+        transfers_json: str,
+        hits: int,
+        predicted_points: float,
+    ) -> dict:
+        """Build the planned squad dict from the recommendation data.
+
+        Parses the enriched squad from *new_squad_json* (JSON string of
+        player dicts), applies ``optimize_starting_xi``, and packages
+        everything into the standard planned-squad structure.
+        """
+        players: list[dict] = []
+        if new_squad_json:
+            try:
+                players = json.loads(new_squad_json) if isinstance(new_squad_json, str) else new_squad_json
+            except (json.JSONDecodeError, TypeError):
+                players = []
+
+        # Ensure every player has required keys
+        for p in players:
+            p.setdefault("player_id", 0)
+            p.setdefault("starter", False)
+            p.setdefault("is_captain", False)
+            p.setdefault("is_vice_captain", False)
+            p.setdefault("predicted_next_gw_points", 0)
+            p.setdefault("captain_score", 0)
+
+        # Optimize starting XI + captain
+        if players:
+            players = optimize_starting_xi(players)
+
+        # Extract captain/vc IDs from optimised squad
+        vc_id = None
+        for p in players:
+            if p.get("is_captain"):
+                captain_id = p["player_id"]
+            if p.get("is_vice_captain"):
+                vc_id = p["player_id"]
+
+        # Build transfer lists for the squad JSON
+        transfers_in = []
+        transfers_out = []
+        try:
+            raw_transfers = json.loads(transfers_json) if isinstance(transfers_json, str) else transfers_json
+            for t in raw_transfers:
+                if t.get("in"):
+                    transfers_in.append(t["in"])
+                if t.get("out"):
+                    transfers_out.append(t["out"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        squad_json = {
+            "players": players,
+            "captain_id": captain_id,
+            "vice_captain_id": vc_id,
+            "bank": bank,
+            "free_transfers": free_transfers,
+            "transfers_in": transfers_in,
+            "transfers_out": transfers_out,
+            "hits": hits,
+            "chip": None,
+            "predicted_points": self._calculate_predicted_points({
+                "players": players,
+                "captain_id": captain_id,
+                "chip": None,
+            }) if players else round(predicted_points, 1),
+        }
+        return squad_json
 
     def _load_fixtures(self) -> list[dict]:
         """Load fixtures from cache."""
