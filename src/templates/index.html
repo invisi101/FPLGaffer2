@@ -1636,6 +1636,403 @@
     gap: 12px;
     margin-bottom: 20px;
   }
+
+  /* Phase-aware Season V2 styles */
+  .gw-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    background: linear-gradient(135deg, var(--surface) 0%, #1a1d2e 100%);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+  .gw-header-title {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+  }
+  .phase-badge {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .phase-badge.planning { background: rgba(251, 191, 36, 0.15); color: var(--yellow); border: 1px solid rgba(251, 191, 36, 0.3); }
+  .phase-badge.ready { background: rgba(45, 212, 160, 0.15); color: var(--green); border: 1px solid rgba(45, 212, 160, 0.3); }
+  .phase-badge.live { background: rgba(108, 99, 255, 0.15); color: var(--accent); border: 1px solid rgba(108, 99, 255, 0.3); }
+  .phase-badge.complete { background: rgba(251, 146, 60, 0.15); color: var(--orange); border: 1px solid rgba(251, 146, 60, 0.3); }
+  .phase-badge.season_over { background: rgba(142, 145, 164, 0.15); color: var(--text2); border: 1px solid rgba(142, 145, 164, 0.3); }
+  .gw-deadline {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text2);
+  }
+  .gw-deadline strong {
+    color: var(--yellow);
+  }
+
+  .phase-spinner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    text-align: center;
+  }
+  .phase-spinner .spinner-ring {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 16px;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  .phase-spinner .spinner-text {
+    font-size: 14px;
+    color: var(--text2);
+  }
+  .phase-spinner .spinner-sub {
+    font-size: 12px;
+    color: var(--text2);
+    margin-top: 4px;
+    opacity: 0.7;
+  }
+
+  .transfer-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .transfer-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .transfer-player {
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 10px 14px;
+    min-width: 170px;
+    flex: 1;
+  }
+  .transfer-player.out { border: 2px solid var(--red); }
+  .transfer-player.in { border: 2px solid var(--green); }
+  .transfer-player .tp-name {
+    font-weight: 700;
+    font-size: 14px;
+    margin-bottom: 2px;
+  }
+  .transfer-player .tp-meta {
+    font-size: 11px;
+    color: var(--text2);
+    margin-bottom: 4px;
+  }
+  .transfer-player .tp-pred {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .transfer-player.out .tp-pred { color: var(--red); }
+  .transfer-player.in .tp-pred { color: var(--green); }
+  .transfer-arrow {
+    font-size: 22px;
+    color: var(--text2);
+    flex-shrink: 0;
+  }
+
+  .ready-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .ready-section h4 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ready-section h4 .section-icon {
+    font-size: 16px;
+  }
+
+  .squad-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+  }
+  .squad-player {
+    background: var(--surface2);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+    border-left: 3px solid var(--border);
+  }
+  .squad-player:hover { border-left-color: var(--accent); background: rgba(108, 99, 255, 0.08); }
+  .squad-player.captain { border-left-color: #ef4444; }
+  .squad-player.vice-captain { border-left-color: var(--yellow); }
+  .squad-player .sp-name { font-weight: 600; }
+  .squad-player .sp-meta { font-size: 11px; color: var(--text2); }
+  .squad-player .sp-pts { font-weight: 600; color: var(--green); font-size: 12px; }
+
+  .chip-toggles {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .chip-toggle {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text2);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .chip-toggle:hover { border-color: var(--accent); color: var(--text); }
+  .chip-toggle.active { background: var(--green); border-color: var(--green); color: #000; }
+  .chip-toggle.used { opacity: 0.35; cursor: not-allowed; text-decoration: line-through; }
+
+  .points-summary {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 16px;
+  }
+  .points-box {
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    text-align: center;
+    min-width: 110px;
+  }
+  .points-box .pb-label {
+    font-size: 11px;
+    color: var(--text2);
+    margin-bottom: 2px;
+  }
+  .points-box .pb-value {
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .points-box.highlight { border-color: var(--green); }
+  .points-box.highlight .pb-value { color: var(--green); }
+
+  .source-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .source-badge.recommended { background: rgba(45, 212, 160, 0.15); color: var(--green); }
+  .source-badge.user_override { background: rgba(108, 99, 255, 0.15); color: var(--accent); }
+
+  .no-transfer-msg {
+    padding: 12px 16px;
+    background: var(--surface2);
+    border-radius: 8px;
+    color: var(--text2);
+    font-size: 13px;
+    border-left: 3px solid var(--green);
+  }
+
+  .transfer-cost-info {
+    font-size: 12px;
+    padding: 6px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: inline-block;
+    margin-bottom: 12px;
+  }
+
+  .action-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 16px;
+  }
+
+  /* Transfer override modal */
+  .transfer-modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .transfer-modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    max-width: 700px;
+    width: 100%;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .transfer-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .transfer-modal-header h3 {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .transfer-modal-close {
+    background: none;
+    border: none;
+    color: var(--text2);
+    font-size: 20px;
+    cursor: pointer;
+  }
+  .transfer-modal-close:hover { color: var(--text); }
+  .transfer-modal-body {
+    padding: 16px 20px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .transfer-modal-step {
+    margin-bottom: 16px;
+  }
+  .transfer-modal-step h4 {
+    font-size: 13px;
+    color: var(--text2);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .available-player-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .available-player-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--surface2);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 13px;
+  }
+  .available-player-row:hover { background: rgba(108, 99, 255, 0.1); }
+  .available-player-row.selected { background: rgba(45, 212, 160, 0.15); border: 1px solid var(--green); }
+  .available-player-row .apr-name { font-weight: 600; }
+  .available-player-row .apr-meta { font-size: 11px; color: var(--text2); }
+  .available-player-row .apr-pts { font-weight: 600; color: var(--green); }
+  .modal-squad-player {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--surface2);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .modal-squad-player:hover { background: rgba(248, 113, 113, 0.1); }
+  .modal-squad-player.selected { background: rgba(248, 113, 113, 0.15); border: 1px solid var(--red); }
+
+  .captain-picker {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 6px;
+  }
+  .captain-option {
+    padding: 8px 10px;
+    background: var(--surface2);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 13px;
+    border: 1px solid transparent;
+  }
+  .captain-option:hover { border-color: var(--accent); }
+  .captain-option.selected { border-color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+  .captain-option .co-name { font-weight: 600; }
+  .captain-option .co-meta { font-size: 11px; color: var(--text2); }
+  .captain-option .co-pts { font-weight: 600; color: var(--green); font-size: 12px; }
+
+  .gw-history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .gw-history-table th {
+    padding: 8px 12px;
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--text2);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  .gw-history-table td {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .gw-history-table tr:hover td { background: var(--surface2); }
+
+  .live-squad-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 12px;
+  }
+  .live-squad-table th {
+    padding: 8px 12px;
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--text2);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  .live-squad-table td {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .live-squad-table tr:hover td { background: var(--surface2); }
+
+  .v2-delete-btn {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+
   /* Help overlay */
   .help-btn {
     background: var(--surface2);
@@ -2401,8 +2798,8 @@
       <h3>Start Season Tracking</h3>
       <p>Enter your FPL Manager ID to import your season history and start receiving weekly recommendations.</p>
       <input type="number" id="seasonManagerId" placeholder="Manager ID (e.g. 904686)">
-      <button class="btn btn-primary" style="width:100%" onclick="initSeason()">Start Season</button>
-      <button class="btn" style="width:100%;margin-top:8px" onclick="deleteSeason()">Delete Season Data</button>
+      <button class="btn btn-primary" style="width:100%" onclick="initSeasonV2()">Start Season</button>
+      <button class="btn" style="width:100%;margin-top:8px" onclick="deleteSeasonV2()">Delete Season Data</button>
     </div>
   </div>
 
@@ -2418,154 +2815,20 @@
     <div id="preseasonChipPlan"></div>
   </div>
 
-  <!-- Dashboard (shown when season is active) -->
-  <div id="seasonDashboard" style="display:none">
-    <div class="season-sub-tabs">
-      <button class="season-sub-tab active" data-section="overview" onclick="switchSeasonSection(this)">Overview</button>
-      <button class="season-sub-tab" data-section="workflow" onclick="switchSeasonSection(this)">Weekly Workflow</button>
-      <button class="season-sub-tab" data-section="fixtures" onclick="switchSeasonSection(this)">Fixtures</button>
-      <button class="season-sub-tab" data-section="transfers" onclick="switchSeasonSection(this)">Transfer History</button>
-      <button class="season-sub-tab" data-section="chips" onclick="switchSeasonSection(this)">Chips</button>
-      <button class="season-sub-tab" data-section="prices" onclick="switchSeasonSection(this)">Prices</button>
-      <button class="season-sub-tab" data-section="strategy" onclick="switchSeasonSection(this)">Strategy</button>
-    </div>
+  <!-- Phase-aware GW view (NEW v2) -->
+  <div id="seasonGWView" style="display:none;">
+    <!-- Header bar: GW number, phase badge, deadline countdown -->
+    <div class="gw-header" id="gwHeader"></div>
 
-    <!-- Overview Section -->
-    <div class="season-section visible" id="seasonOverview">
-      <div class="summary-cards" id="seasonSummaryCards"></div>
-      <div id="seasonTeamView"></div>
-      <div class="accuracy-stats" id="seasonAccuracy"></div>
-      <div class="season-chart-row">
-        <div class="season-chart-box"><h4>Overall Rank</h4><canvas id="rankChart" height="180"></canvas></div>
-        <div class="season-chart-box"><h4>Points per GW</h4><canvas id="pointsChart" height="180"></canvas></div>
-      </div>
-      <div class="season-chart-row">
-        <div class="season-chart-box"><h4>Prediction Accuracy</h4><canvas id="accuracyChart" height="180"></canvas></div>
-      </div>
-    </div>
+    <!-- Phase content (rendered dynamically) -->
+    <div id="gwPhaseContent"></div>
 
-    <!-- Weekly Workflow Section -->
-    <div class="season-section" id="seasonWorkflow">
-      <!-- Workflow Step Indicators -->
-      <div id="workflowSteps" style="display:flex;gap:0;margin-bottom:20px;align-items:center;flex-wrap:wrap">
-        <div class="wf-step" id="wfStep1" data-step="1">
-          <div class="wf-step-num">1</div>
-          <div class="wf-step-label">Get Latest Data</div>
-        </div>
-        <div class="wf-step-arrow">&rarr;</div>
-        <div class="wf-step" id="wfStep2" data-step="2">
-          <div class="wf-step-num">2</div>
-          <div class="wf-step-label">Generate Recommendation</div>
-        </div>
-        <div class="wf-step-arrow">&rarr;</div>
-        <div class="wf-step" id="wfStep3" data-step="3">
-          <div class="wf-step-num">3</div>
-          <div class="wf-step-label">Execute Actions</div>
-        </div>
-        <div class="wf-step-arrow">&rarr;</div>
-        <div class="wf-step" id="wfStep4" data-step="4">
-          <div class="wf-step-num">4</div>
-          <div class="wf-step-label">Record Results</div>
-        </div>
-      </div>
+    <!-- History section (always shown when data exists) -->
+    <div id="gwHistory" style="margin-top:24px;"></div>
 
-      <p class="inline-help">Follow these steps each gameweek: <strong>Get Latest Data</strong> refreshes player stats and fixtures. <strong>Generate Recommendation</strong> creates your transfer, captain, and chip plan. <strong>Execute Actions</strong> &mdash; carry out the plan on the FPL website (transfers are not automated yet). <strong>Record Results</strong> imports your actual picks after the GW finishes to track accuracy.</p>
-
-      <div class="workflow-actions">
-        <button class="btn btn-primary" onclick="generateRecommendation()">Generate Recommendation</button>
-        <button class="btn" onclick="recordResults()">Record Results (after GW finishes)</button>
-      </div>
-
-      <!-- Action Plan Card -->
-      <div id="actionPlanDisplay"></div>
-
-      <div id="recommendationDisplay"></div>
-
-      <!-- Outcome Display -->
-      <div id="outcomeDisplay"></div>
-    </div>
-
-    <!-- Fixtures Section -->
-    <div class="season-section" id="seasonFixtures">
-      <div style="margin-bottom:12px">
-        <button class="btn" onclick="refreshFixtures()">Refresh Fixtures</button>
-      </div>
-      <div id="fixtureGridContainer"></div>
-    </div>
-
-    <!-- Transfer History Section -->
-    <div class="season-section" id="seasonTransfers">
-      <div id="transferHistoryContainer"></div>
-    </div>
-
-    <!-- Chips Section -->
-    <div class="season-section" id="seasonChips">
-      <div id="chipsContainer"></div>
-    </div>
-
-    <!-- Prices Section -->
-    <div class="season-section" id="seasonPrices">
-      <div style="margin-bottom:12px">
-        <button class="btn" onclick="updatePrices()">Update Prices</button>
-      </div>
-      <h4 style="margin-bottom:8px;font-size:14px">Price Alerts</h4>
-      <div id="priceAlertsContainer"></div>
-      <h4 style="margin:16px 0 8px;font-size:14px">Price Predictions</h4>
-      <div id="pricePredictionsDisplay"></div>
-      <h4 style="margin:16px 0 8px;font-size:14px">Watchlist</h4>
-      <div style="margin-bottom:8px;position:relative">
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="text" class="search-box" id="watchlistSearch" placeholder="Search player to add..." oninput="debounceWatchlistSearch()" autocomplete="off">
-        </div>
-        <div id="watchlistDropdown" style="display:none;position:absolute;top:36px;left:0;width:320px;max-height:200px;overflow-y:auto;background:var(--surface2);border:1px solid var(--border);border-radius:6px;z-index:100"></div>
-      </div>
-      <div id="watchlistContainer"></div>
-      <h4 style="margin:16px 0 8px;font-size:14px">Squad Prices</h4>
-      <div id="priceTableContainer"></div>
-    </div>
-
-    <!-- Strategy Section -->
-    <div class="season-section" id="seasonStrategy">
-      <!-- Plan Health Banner -->
-      <div id="planHealthBanner" style="display:none;background:var(--surface2);border-radius:8px;padding:12px 16px;margin-bottom:16px;border-left:3px solid var(--red)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-size:13px;font-weight:600;color:var(--red)">Plan Health Issue</div>
-          <div style="display:flex;gap:6px">
-            <button class="btn btn-primary" style="font-size:11px;padding:4px 10px" onclick="generateStrategicPlan()">Regenerate Plan</button>
-            <button class="btn" style="font-size:11px;padding:4px 10px" onclick="document.getElementById('planHealthBanner').style.display='none'">Dismiss</button>
-          </div>
-        </div>
-        <div id="planHealthTriggers" style="font-size:12px;color:var(--text2)"></div>
-      </div>
-
-      <p class="inline-help">The strategic plan looks 5 gameweeks ahead. It plans transfers, captains, and chip timing as a unified strategy. <strong>Transfer Timeline</strong> shows who to bring in/out each week. <strong>Captain Plan</strong> pre-selects your captain based on fixtures and upside. <strong>Chip Schedule</strong> shows when to play each chip based on fixture difficulty, DGWs/BGWs, and squad strength. Click <strong>Generate Plan</strong> to create or refresh.</p>
-
-      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
-        <button class="btn btn-primary" onclick="generateStrategicPlan()">Generate Plan</button>
-        <span id="strategyPlanStatus" style="font-size:12px;color:var(--text2)"></span>
-      </div>
-
-      <!-- Plan Rationale -->
-      <div id="strategyRationale" style="display:none;background:var(--surface2);border-radius:8px;padding:12px 16px;margin-bottom:16px;border-left:3px solid var(--accent)">
-        <div style="font-size:11px;text-transform:uppercase;color:var(--text2);margin-bottom:4px">Strategic Rationale</div>
-        <div id="strategyRationaleText" style="font-size:13px;line-height:1.6"></div>
-      </div>
-
-      <!-- Transfer Timeline -->
-      <h4 style="margin-bottom:8px;font-size:14px">Transfer Timeline</h4>
-      <div id="strategyTimeline" style="display:flex;gap:12px;overflow-x:auto;padding-bottom:12px;margin-bottom:20px"></div>
-
-      <!-- Captain Plan -->
-      <h4 style="margin-bottom:8px;font-size:14px">Captain Plan</h4>
-      <div id="strategyCaptainPlan" style="margin-bottom:20px"></div>
-
-      <!-- Chip Schedule -->
-      <h4 style="margin-bottom:8px;font-size:14px">Chip Schedule</h4>
-      <div id="strategyChipSchedule" style="margin-bottom:20px"></div>
-
-      <!-- Plan Changelog -->
-      <h4 style="margin-bottom:8px;font-size:14px">Plan Changelog</h4>
-      <div id="strategyChangelog"></div>
+    <!-- Delete season -->
+    <div class="v2-delete-btn">
+      <button class="btn" onclick="deleteSeasonV2()" style="font-size:11px;padding:4px 10px;">Delete Season Data</button>
     </div>
   </div>
 </div>
@@ -2668,8 +2931,11 @@ function connectSSE() {
         const gwData = JSON.parse(msg);
         if (gwData && gwData.gw) handleBacktestGW(gwData);
       } catch(e) { /* not JSON, ignore */ }
-    } else if (evt === 'plan_invalidated') {
-      if (typeof checkPlanHealth === 'function') checkPlanHealth();
+    } else if (evt === 'plan_invalidated' || evt === 'alert') {
+      if (typeof loadSeasonV2 === 'function') {
+        const sp = document.getElementById('seasonPanel');
+        if (sp && sp.classList.contains('visible')) loadSeasonV2();
+      }
     } else if (evt === 'progress') {
       appendLog(msg);
     }
@@ -3331,9 +3597,10 @@ function switchTab(tab) {
     seasonPanel.classList.add('visible');
     const saved = localStorage.getItem('fpl_manager_id');
     if (saved) document.getElementById('seasonManagerId').value = saved;
-    checkSeasonStatus();
+    loadSeasonV2();
   } else {
     seasonPanel.classList.remove('visible');
+    clearSeasonV2Poll();
   }
 
   const backtestPanel = document.getElementById('backtestPanel');
@@ -3942,12 +4209,796 @@ function renderTransfers(d) {
 }
 
 // ---------------------------------------------------------------------------
-// Season Management
+// Season V2 — Phase-Aware GW-Centric View
 // ---------------------------------------------------------------------------
+
+let _seasonV2PollTimer = null;
+let _seasonV2StatusCache = null;
+let _transferModalState = null; // {selectedOut: player, phase: 'pick_out'|'pick_in'}
 
 function getSeasonManagerId() {
   return document.getElementById('seasonManagerId').value || localStorage.getItem('fpl_manager_id') || '';
 }
+
+function clearSeasonV2Poll() {
+  if (_seasonV2PollTimer) { clearInterval(_seasonV2PollTimer); _seasonV2PollTimer = null; }
+}
+
+async function loadSeasonV2() {
+  const mid = getSeasonManagerId();
+  if (!mid) return;
+
+  try {
+    const resp = await fetch(`/api/v2/season/status?manager_id=${mid}`);
+    const data = await resp.json();
+    _seasonV2StatusCache = data;
+
+    if (!data.active) {
+      // Check pre-season
+      try {
+        const teamResp = await fetch(`/api/my-team?manager_id=${mid}`);
+        const teamData = await teamResp.json();
+        if (teamData.pre_season) {
+          document.getElementById('seasonInitSection').style.display = 'none';
+          document.getElementById('seasonGWView').style.display = 'none';
+          document.getElementById('preSeasonPanel').style.display = 'block';
+          loadPreseasonResult();
+          return;
+        }
+      } catch(e) { /* ignore */ }
+
+      document.getElementById('seasonInitSection').style.display = 'block';
+      document.getElementById('seasonGWView').style.display = 'none';
+      document.getElementById('preSeasonPanel').style.display = 'none';
+      return;
+    }
+
+    document.getElementById('seasonInitSection').style.display = 'none';
+    document.getElementById('preSeasonPanel').style.display = 'none';
+    document.getElementById('seasonGWView').style.display = 'block';
+
+    renderGWHeader(data);
+    const content = document.getElementById('gwPhaseContent');
+
+    switch (data.phase) {
+      case 'planning': renderPlanningPhase(content, data); break;
+      case 'ready': renderReadyPhase(content, data); break;
+      case 'live': renderLivePhase(content, data); break;
+      case 'complete': renderCompletePhase(content, data); break;
+      case 'season_over': renderSeasonOverPhase(content, data); break;
+      default: content.innerHTML = `<div class="phase-spinner"><div class="spinner-text">Unknown phase: ${data.phase}</div></div>`;
+    }
+
+    loadGWHistory(mid);
+    setupSeasonV2Poll(data);
+  } catch(e) {
+    console.error('loadSeasonV2 error:', e);
+  }
+}
+
+function setupSeasonV2Poll(data) {
+  clearSeasonV2Poll();
+  // Poll in READY (60s for injury alerts) and LIVE (60s for phase change)
+  const phase = data.phase;
+  if (phase === 'ready' || phase === 'live') {
+    _seasonV2PollTimer = setInterval(() => {
+      const seasonPanel = document.getElementById('seasonPanel');
+      if (!seasonPanel || !seasonPanel.classList.contains('visible')) {
+        clearSeasonV2Poll();
+        return;
+      }
+      loadSeasonV2();
+    }, 60000);
+  }
+}
+
+function renderGWHeader(data) {
+  const el = document.getElementById('gwHeader');
+  const gw = data.gw || '?';
+  const phase = data.phase || 'planning';
+  const phaseLabel = {
+    planning: 'Planning', ready: 'Ready', live: 'Live',
+    complete: 'Complete', season_over: 'Season Over'
+  }[phase] || phase;
+
+  let deadlineHtml = '';
+  if (data.deadline && !data.deadline_passed) {
+    const dl = new Date(data.deadline);
+    const now = new Date();
+    const diffMs = dl - now;
+    if (diffMs > 0) {
+      const days = Math.floor(diffMs / 86400000);
+      const hours = Math.floor((diffMs % 86400000) / 3600000);
+      const mins = Math.floor((diffMs % 3600000) / 60000);
+      let timeStr = '';
+      if (days > 0) timeStr += `${days}d `;
+      timeStr += `${hours}h ${mins}m`;
+      const deadlineFormatted = dl.toLocaleString('en-GB', {weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+      deadlineHtml = `<div class="gw-deadline">Deadline: <strong>${deadlineFormatted}</strong> (${timeStr})</div>`;
+    }
+  } else if (data.deadline_passed) {
+    deadlineHtml = `<div class="gw-deadline" style="color:var(--red)">Deadline passed</div>`;
+  }
+
+  el.innerHTML = `
+    <div class="gw-header-title">GW ${gw}</div>
+    <span class="phase-badge ${phase}">${phaseLabel}</span>
+    ${deadlineHtml}
+  `;
+}
+
+// --- Phase: PLANNING ---
+function renderPlanningPhase(el, data) {
+  el.innerHTML = `
+    <div class="phase-spinner">
+      <div class="spinner-ring"></div>
+      <div class="spinner-text">Generating recommendations for GW${data.gw}...</div>
+      <div class="spinner-sub">This runs data refresh, model predictions, and transfer optimization.</div>
+      <div style="margin-top:16px">
+        <button class="btn btn-primary" onclick="triggerV2Tick()">Start Planning</button>
+      </div>
+    </div>
+  `;
+}
+
+async function triggerV2Tick() {
+  const mid = getSeasonManagerId();
+  if (!mid) return;
+  try {
+    const resp = await fetch('/api/v2/season/tick', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({manager_id: parseInt(mid)}),
+    });
+    const d = await resp.json();
+    if (d.error) { alert(d.error); return; }
+    // SSE will show progress; task_done will trigger loadSeasonV2
+  } catch(e) { alert('Failed to start tick: ' + e.message); }
+}
+
+// --- Phase: READY (main view) ---
+function renderReadyPhase(el, data) {
+  const ps = data.planned_squad;
+  if (!ps || !ps.squad_json) {
+    el.innerHTML = `<div class="phase-spinner">
+      <div class="spinner-text">No planned squad found.</div>
+      <div style="margin-top:12px"><button class="btn btn-primary" onclick="triggerV2Tick()">Generate Plan</button></div>
+    </div>`;
+    return;
+  }
+
+  const sq = ps.squad_json;
+  const players = sq.players || [];
+  const starters = players.filter(p => p.starter);
+  const bench = players.filter(p => !p.starter);
+  const transfersIn = sq.transfers_in || [];
+  const transfersOut = sq.transfers_out || [];
+  const captainId = sq.captain_id;
+  const chip = sq.chip;
+  const source = ps.source || 'recommended';
+  const hits = sq.hits || 0;
+  const freeFTs = sq.free_transfers || 1;
+  const predictedPts = sq.predicted_points;
+  const bank = sq.bank;
+
+  let html = '';
+
+  // Source badge
+  const sourceLabel = source === 'user_override' ? 'Your Overrides' : 'Recommended';
+  const sourceClass = source === 'user_override' ? 'user_override' : 'recommended';
+  html += `<div style="margin-bottom:16px"><span class="source-badge ${sourceClass}">${sourceLabel}</span></div>`;
+
+  // --- Transfers section ---
+  html += '<div class="ready-section">';
+  html += '<h4><span class="section-icon">&#x1F504;</span> Transfers</h4>';
+
+  if (transfersIn.length > 0 && transfersOut.length > 0) {
+    html += '<div class="transfer-cards">';
+    const maxLen = Math.max(transfersIn.length, transfersOut.length);
+    for (let i = 0; i < maxLen; i++) {
+      const pOut = transfersOut[i] || {};
+      const pIn = transfersIn[i] || {};
+      html += `<div class="transfer-card">
+        <div class="transfer-player out">
+          <div class="tp-name">${pOut.web_name || '?'}</div>
+          <div class="tp-meta">${pOut.position || ''} &middot; ${pOut.team_code || ''} &middot; ${pOut.cost != null ? Number(pOut.cost).toFixed(1) + 'm' : ''}</div>
+          <div class="tp-pred">${pOut.predicted_next_gw_points != null ? Number(pOut.predicted_next_gw_points).toFixed(1) + ' pts' : ''}</div>
+        </div>
+        <div class="transfer-arrow">&rarr;</div>
+        <div class="transfer-player in">
+          <div class="tp-name">${pIn.web_name || '?'}</div>
+          <div class="tp-meta">${pIn.position || ''} &middot; ${pIn.team_code || ''} &middot; ${pIn.cost != null ? Number(pIn.cost).toFixed(1) + 'm' : ''}</div>
+          <div class="tp-pred">${pIn.predicted_next_gw_points != null ? Number(pIn.predicted_next_gw_points).toFixed(1) + ' pts' : ''}</div>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+
+    // Transfer cost info
+    const nTransfers = Math.max(transfersIn.length, transfersOut.length);
+    if (chip === 'wildcard' || chip === 'freehit') {
+      const chipLabel = chip === 'wildcard' ? 'Wildcard' : 'Free Hit';
+      html += `<div class="transfer-cost-info">Transfers: <strong>${nTransfers}</strong> &mdash; <span style="color:var(--green)">All free (${chipLabel})</span></div>`;
+    } else if (hits > 0) {
+      const hitCost = hits * 4;
+      html += `<div class="transfer-cost-info">Transfers: <strong>${nTransfers}</strong> &mdash; <span style="color:var(--green)">${freeFTs} free</span> + <span style="color:var(--red);font-weight:600">${hits} hit${hits > 1 ? 's' : ''} (-${hitCost}pts)</span></div>`;
+    } else {
+      html += `<div class="transfer-cost-info">Transfers: <strong>${nTransfers}</strong> &mdash; <span style="color:var(--green)">${nTransfers} of ${freeFTs} free transfer${freeFTs > 1 ? 's' : ''} used</span></div>`;
+    }
+  } else {
+    html += '<div class="no-transfer-msg">Recommendation: Bank your free transfer</div>';
+  }
+
+  // Transfer action buttons
+  html += `<div class="action-buttons">
+    <button class="btn btn-primary" onclick="acceptTransfersV2()">Accept Recommendations</button>
+    <button class="btn" onclick="openTransferModal()">Make My Own Transfers</button>
+    ${source === 'user_override' ? '<button class="btn" onclick="undoTransfersV2()">Reset to Recommendations</button>' : ''}
+  </div>`;
+  html += '</div>';
+
+  // --- Captain section ---
+  const captainPlayer = starters.find(p => p.player_id === captainId);
+  html += '<div class="ready-section">';
+  html += '<h4><span class="section-icon">&#x00A9;</span> Captain</h4>';
+  if (captainPlayer) {
+    html += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+      <div style="background:var(--surface2);border:2px solid #ef4444;border-radius:8px;padding:10px 14px;display:inline-block">
+        <div style="font-weight:700;font-size:16px">${captainPlayer.web_name} <span class="captain-badge">(C)</span></div>
+        <div style="font-size:12px;color:var(--text2)">${captainPlayer.position || ''} &middot; ${captainPlayer.cost != null ? Number(captainPlayer.cost).toFixed(1) + 'm' : ''}</div>
+        <div style="font-size:14px;font-weight:600;color:var(--green);margin-top:4px">${captainPlayer.predicted_next_gw_points != null ? Number(captainPlayer.predicted_next_gw_points).toFixed(1) + ' pts predicted' : ''}</div>
+      </div>
+      <button class="btn" onclick="toggleCaptainPicker()" style="font-size:11px">Change Captain</button>
+    </div>`;
+  } else {
+    html += '<div style="color:var(--text2);font-size:13px">No captain selected</div>';
+  }
+  html += '<div id="captainPickerContainer" style="display:none"></div>';
+  html += '</div>';
+
+  // --- Squad section (starters + bench) ---
+  html += '<div class="ready-section">';
+  html += '<h4><span class="section-icon">&#x26BD;</span> Starting XI</h4>';
+  html += '<div class="squad-grid">';
+  const posOrder = {GKP: 0, DEF: 1, MID: 2, FWD: 3};
+  starters.sort((a, b) => (posOrder[a.position] || 9) - (posOrder[b.position] || 9));
+  starters.forEach(p => {
+    const isCap = p.player_id === captainId;
+    const isVc = p.player_id === sq.vice_captain_id;
+    let cls = 'squad-player';
+    if (isCap) cls += ' captain';
+    else if (isVc) cls += ' vice-captain';
+    const badge = isCap ? ' (C)' : (isVc ? ' (V)' : '');
+    html += `<div class="${cls}">
+      <div class="sp-name">${p.web_name || '?'}${badge}</div>
+      <div class="sp-meta">${p.position || ''} &middot; ${p.cost != null ? Number(p.cost).toFixed(1) + 'm' : ''}</div>
+      <div class="sp-pts">${p.predicted_next_gw_points != null ? Number(p.predicted_next_gw_points).toFixed(1) + ' pts' : '-'}</div>
+    </div>`;
+  });
+  html += '</div>';
+
+  if (bench.length) {
+    html += '<h4 style="margin-top:12px;font-size:12px;color:var(--text2);text-transform:uppercase">Bench</h4>';
+    html += '<div class="squad-grid">';
+    bench.sort((a, b) => (posOrder[a.position] || 9) - (posOrder[b.position] || 9));
+    bench.forEach(p => {
+      html += `<div class="squad-player">
+        <div class="sp-name">${p.web_name || '?'}</div>
+        <div class="sp-meta">${p.position || ''} &middot; ${p.cost != null ? Number(p.cost).toFixed(1) + 'm' : ''}</div>
+        <div class="sp-pts" style="color:var(--text2)">${p.predicted_next_gw_points != null ? Number(p.predicted_next_gw_points).toFixed(1) + ' pts' : '-'}</div>
+      </div>`;
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // --- Chip section ---
+  html += '<div class="ready-section">';
+  html += '<h4><span class="section-icon">&#x1F0CF;</span> Chips</h4>';
+  html += '<div class="chip-toggles">';
+  const chipNames = ['bboost', '3xc', 'freehit', 'wildcard'];
+  const chipLabels = {bboost: 'Bench Boost', '3xc': 'Triple Captain', freehit: 'Free Hit', wildcard: 'Wildcard'};
+  chipNames.forEach(c => {
+    const isActive = chip === c;
+    const cls = isActive ? 'chip-toggle active' : 'chip-toggle';
+    html += `<button class="${cls}" onclick="toggleChipV2('${c}')">${chipLabels[c]}</button>`;
+  });
+  html += '</div>';
+  if (chip) {
+    html += `<div style="margin-top:8px;font-size:12px;color:var(--green)">Active chip: <strong>${chipLabels[chip] || chip}</strong></div>`;
+  }
+  html += '</div>';
+
+  // --- Points summary ---
+  html += '<div class="points-summary">';
+  if (predictedPts != null) {
+    html += `<div class="points-box highlight">
+      <div class="pb-label">Predicted Points</div>
+      <div class="pb-value">${Number(predictedPts).toFixed(1)}</div>
+    </div>`;
+  }
+  if (bank != null) {
+    html += `<div class="points-box">
+      <div class="pb-label">Bank</div>
+      <div class="pb-value">${Number(bank).toFixed(1)}m</div>
+    </div>`;
+  }
+  html += `<div class="points-box">
+    <div class="pb-label">Free Transfers</div>
+    <div class="pb-value">${freeFTs}</div>
+  </div>`;
+  html += '</div>';
+
+  el.innerHTML = html;
+}
+
+// --- Accept transfers ---
+async function acceptTransfersV2() {
+  const mid = getSeasonManagerId();
+  if (!mid) return;
+  try {
+    const resp = await fetch('/api/v2/season/accept-transfers', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({manager_id: parseInt(mid)}),
+    });
+    const d = await resp.json();
+    if (d.error) { alert(d.error); return; }
+    loadSeasonV2();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// --- Undo transfers ---
+async function undoTransfersV2() {
+  const mid = getSeasonManagerId();
+  if (!mid) return;
+  try {
+    const resp = await fetch('/api/v2/season/undo-transfers', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({manager_id: parseInt(mid)}),
+    });
+    const d = await resp.json();
+    if (d.error) { alert(d.error); return; }
+    loadSeasonV2();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// --- Captain picker ---
+function toggleCaptainPicker() {
+  const container = document.getElementById('captainPickerContainer');
+  if (!container) return;
+  if (container.style.display !== 'none') {
+    container.style.display = 'none';
+    return;
+  }
+  container.style.display = 'block';
+
+  const ps = _seasonV2StatusCache?.planned_squad;
+  if (!ps || !ps.squad_json) return;
+
+  const players = (ps.squad_json.players || []).filter(p => p.starter);
+  players.sort((a, b) => (b.captain_score || b.predicted_next_gw_points || 0) - (a.captain_score || a.predicted_next_gw_points || 0));
+
+  let html = '<div class="captain-picker">';
+  players.forEach(p => {
+    const isCurrent = p.player_id === ps.squad_json.captain_id;
+    const cls = isCurrent ? 'captain-option selected' : 'captain-option';
+    html += `<div class="${cls}" onclick="setCaptainV2(${p.player_id})">
+      <div class="co-name">${p.web_name || '?'}${isCurrent ? ' (C)' : ''}</div>
+      <div class="co-meta">${p.position || ''} &middot; ${p.cost != null ? Number(p.cost).toFixed(1) + 'm' : ''}</div>
+      <div class="co-pts">${p.captain_score != null ? Number(p.captain_score).toFixed(1) : (p.predicted_next_gw_points != null ? Number(p.predicted_next_gw_points).toFixed(1) : '-')} cap score</div>
+    </div>`;
+  });
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+async function setCaptainV2(playerId) {
+  const mid = getSeasonManagerId();
+  if (!mid) return;
+  try {
+    const resp = await fetch('/api/v2/season/set-captain', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({manager_id: parseInt(mid), player_id: playerId}),
+    });
+    const d = await resp.json();
+    if (d.error) { alert(d.error); return; }
+    loadSeasonV2();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// --- Chip toggle ---
+async function toggleChipV2(chipName) {
+  const mid = getSeasonManagerId();
+  if (!mid) return;
+
+  const ps = _seasonV2StatusCache?.planned_squad;
+  const currentChip = ps?.squad_json?.chip;
+
+  try {
+    if (currentChip === chipName) {
+      // Unlock
+      const resp = await fetch('/api/v2/season/unlock-chip', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({manager_id: parseInt(mid)}),
+      });
+      const d = await resp.json();
+      if (d.error) { alert(d.error); return; }
+    } else {
+      // Lock
+      const resp = await fetch('/api/v2/season/lock-chip', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({manager_id: parseInt(mid), chip: chipName}),
+      });
+      const d = await resp.json();
+      if (d.error) { alert(d.error); return; }
+    }
+    loadSeasonV2();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// --- Transfer Override Modal ---
+function openTransferModal() {
+  const ps = _seasonV2StatusCache?.planned_squad;
+  if (!ps || !ps.squad_json) { alert('No planned squad data.'); return; }
+
+  _transferModalState = { phase: 'pick_out', selectedOut: null };
+  renderTransferModal();
+}
+
+function closeTransferModal() {
+  _transferModalState = null;
+  const overlay = document.getElementById('transferModalOverlay');
+  if (overlay) overlay.remove();
+}
+
+function renderTransferModal() {
+  // Remove existing
+  let overlay = document.getElementById('transferModalOverlay');
+  if (overlay) overlay.remove();
+
+  const ps = _seasonV2StatusCache?.planned_squad;
+  if (!ps || !ps.squad_json) return;
+
+  const sq = ps.squad_json;
+  const players = sq.players || [];
+  const posOrder = {GKP: 0, DEF: 1, MID: 2, FWD: 3};
+
+  overlay = document.createElement('div');
+  overlay.id = 'transferModalOverlay';
+  overlay.className = 'transfer-modal-overlay';
+  overlay.onclick = function(e) { if (e.target === overlay) closeTransferModal(); };
+
+  let html = `<div class="transfer-modal">
+    <div class="transfer-modal-header">
+      <h3>Make a Transfer</h3>
+      <button class="transfer-modal-close" onclick="closeTransferModal()">&times;</button>
+    </div>
+    <div class="transfer-modal-body">`;
+
+  if (_transferModalState.phase === 'pick_out') {
+    html += '<div class="transfer-modal-step"><h4>Step 1: Select player to transfer out</h4>';
+    const sorted = [...players].sort((a, b) => (posOrder[a.position] || 9) - (posOrder[b.position] || 9));
+    sorted.forEach(p => {
+      html += `<div class="modal-squad-player" onclick="selectTransferOut(${p.player_id})">
+        <div>
+          <span style="font-weight:600">${p.web_name || '?'}</span>
+          <span class="pos-tag ${p.position}" style="margin-left:6px">${p.position || ''}</span>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:12px;color:var(--text2)">${p.cost != null ? Number(p.cost).toFixed(1) + 'm' : ''}</div>
+          <div style="font-size:12px;color:var(--green)">${p.predicted_next_gw_points != null ? Number(p.predicted_next_gw_points).toFixed(1) + ' pts' : ''}</div>
+        </div>
+      </div>`;
+    });
+    html += '</div>';
+  } else if (_transferModalState.phase === 'pick_in') {
+    const outPlayer = _transferModalState.selectedOut;
+    html += `<div class="transfer-modal-step">
+      <h4>Transferring out: <span style="color:var(--red)">${outPlayer.web_name}</span> (${outPlayer.position})</h4>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Select replacement below. Showing ${outPlayer.position} players within budget.</div>
+      <input type="text" class="search-box" placeholder="Search player..." oninput="filterTransferIn(this.value)" style="width:100%;margin-bottom:8px" id="transferInSearch">
+      <div class="available-player-list" id="transferInList">
+        <div style="padding:12px;color:var(--text2);text-align:center">Loading players...</div>
+      </div>
+    </div>`;
+  }
+
+  html += `<div style="margin-top:12px;display:flex;gap:8px">
+    <button class="btn" onclick="closeTransferModal()">Cancel</button>
+    ${_transferModalState.phase === 'pick_in' ? '<button class="btn" onclick="backToPickOut()">Back</button>' : ''}
+  </div>`;
+  html += '</div></div>';
+
+  overlay.innerHTML = html;
+  document.body.appendChild(overlay);
+
+  // If in pick_in phase, load available players
+  if (_transferModalState.phase === 'pick_in') {
+    loadAvailablePlayersForTransfer();
+  }
+}
+
+function selectTransferOut(playerId) {
+  const ps = _seasonV2StatusCache?.planned_squad;
+  if (!ps || !ps.squad_json) return;
+
+  const player = (ps.squad_json.players || []).find(p => p.player_id === playerId);
+  if (!player) return;
+
+  _transferModalState.selectedOut = player;
+  _transferModalState.phase = 'pick_in';
+  renderTransferModal();
+}
+
+function backToPickOut() {
+  _transferModalState.phase = 'pick_out';
+  _transferModalState.selectedOut = null;
+  renderTransferModal();
+}
+
+async function loadAvailablePlayersForTransfer() {
+  const outPlayer = _transferModalState?.selectedOut;
+  if (!outPlayer) return;
+
+  const ps = _seasonV2StatusCache?.planned_squad;
+  if (!ps || !ps.squad_json) return;
+
+  const sq = ps.squad_json;
+  const currentIds = new Set((sq.players || []).map(p => p.player_id));
+  const position = outPlayer.position;
+  const budget = (sq.bank || 0) + (outPlayer.cost || 0);
+
+  // Count team occurrences (excluding the outgoing player)
+  const teamCounts = {};
+  (sq.players || []).forEach(p => {
+    if (p.player_id === outPlayer.player_id) return;
+    const tc = p.team_code || 0;
+    teamCounts[tc] = (teamCounts[tc] || 0) + 1;
+  });
+
+  try {
+    const resp = await fetch('/api/predictions');
+    const data = await resp.json();
+    const allPlayers = data.players || [];
+
+    let candidates = allPlayers.filter(p => {
+      if (currentIds.has(p.player_id)) return false;
+      if (p.position !== position) return false;
+      if (p.cost > budget) return false;
+      // Max 3 per team
+      const tc = p.team_code || 0;
+      if ((teamCounts[tc] || 0) >= 3) return false;
+      return true;
+    });
+
+    // Sort by predicted points
+    candidates.sort((a, b) => (b.predicted_next_gw_points || 0) - (a.predicted_next_gw_points || 0));
+    candidates = candidates.slice(0, 50);
+
+    _transferModalState._candidates = candidates;
+    renderTransferInList(candidates);
+  } catch(e) {
+    const list = document.getElementById('transferInList');
+    if (list) list.innerHTML = '<div style="padding:12px;color:var(--red)">Error loading players</div>';
+  }
+}
+
+function renderTransferInList(candidates) {
+  const list = document.getElementById('transferInList');
+  if (!list) return;
+
+  if (!candidates.length) {
+    list.innerHTML = '<div style="padding:12px;color:var(--text2)">No available players found</div>';
+    return;
+  }
+
+  let html = '';
+  candidates.forEach(p => {
+    html += `<div class="available-player-row" onclick="executeTransferIn(${p.player_id})">
+      <div>
+        <div class="apr-name">${p.web_name || '?'}</div>
+        <div class="apr-meta">${p.position || ''} &middot; ${p.team || ''} &middot; ${p.cost != null ? Number(p.cost).toFixed(1) + 'm' : ''}</div>
+      </div>
+      <div class="apr-pts">${p.predicted_next_gw_points != null ? Number(p.predicted_next_gw_points).toFixed(1) + ' pts' : '-'}</div>
+    </div>`;
+  });
+  list.innerHTML = html;
+}
+
+function filterTransferIn(query) {
+  const candidates = _transferModalState?._candidates || [];
+  if (!query) {
+    renderTransferInList(candidates);
+    return;
+  }
+  const q = query.toLowerCase();
+  const filtered = candidates.filter(p => (p.web_name || '').toLowerCase().includes(q));
+  renderTransferInList(filtered);
+}
+
+async function executeTransferIn(playerInId) {
+  const outPlayer = _transferModalState?.selectedOut;
+  if (!outPlayer) return;
+  const mid = getSeasonManagerId();
+  if (!mid) return;
+
+  try {
+    const resp = await fetch('/api/v2/season/make-transfer', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        manager_id: parseInt(mid),
+        player_out_id: outPlayer.player_id,
+        player_in_id: playerInId,
+      }),
+    });
+    const d = await resp.json();
+    if (d.error) { alert(d.error); return; }
+    closeTransferModal();
+    loadSeasonV2();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// --- Phase: LIVE ---
+function renderLivePhase(el, data) {
+  const ps = data.planned_squad;
+  let squadHtml = '';
+
+  if (ps && ps.squad_json && ps.squad_json.players) {
+    const players = ps.squad_json.players;
+    const starters = players.filter(p => p.starter);
+    const bench = players.filter(p => !p.starter);
+    const posOrder = {GKP: 0, DEF: 1, MID: 2, FWD: 3};
+    starters.sort((a, b) => (posOrder[a.position] || 9) - (posOrder[b.position] || 9));
+
+    squadHtml = '<div class="ready-section"><h4>Your Planned Squad</h4>';
+    squadHtml += '<table class="live-squad-table"><thead><tr><th>Player</th><th>Pos</th><th>Cost</th><th>Pred</th></tr></thead><tbody>';
+    starters.forEach(p => {
+      const badge = p.player_id === ps.squad_json.captain_id ? ' (C)' : (p.player_id === ps.squad_json.vice_captain_id ? ' (V)' : '');
+      squadHtml += `<tr>
+        <td style="font-weight:600">${p.web_name || '?'}${badge}</td>
+        <td><span class="pos-tag ${p.position}">${p.position}</span></td>
+        <td>${p.cost != null ? Number(p.cost).toFixed(1) : '-'}</td>
+        <td style="color:var(--green)">${p.predicted_next_gw_points != null ? Number(p.predicted_next_gw_points).toFixed(1) : '-'}</td>
+      </tr>`;
+    });
+    squadHtml += '</tbody></table>';
+
+    if (bench.length) {
+      bench.sort((a, b) => (posOrder[a.position] || 9) - (posOrder[b.position] || 9));
+      squadHtml += '<h4 style="margin-top:12px;font-size:12px;color:var(--text2);text-transform:uppercase">Bench</h4>';
+      squadHtml += '<table class="live-squad-table"><thead><tr><th>Player</th><th>Pos</th><th>Cost</th><th>Pred</th></tr></thead><tbody>';
+      bench.forEach(p => {
+        squadHtml += `<tr>
+          <td>${p.web_name || '?'}</td>
+          <td><span class="pos-tag ${p.position}">${p.position}</span></td>
+          <td>${p.cost != null ? Number(p.cost).toFixed(1) : '-'}</td>
+          <td style="color:var(--text2)">${p.predicted_next_gw_points != null ? Number(p.predicted_next_gw_points).toFixed(1) : '-'}</td>
+        </tr>`;
+      });
+      squadHtml += '</tbody></table>';
+    }
+    squadHtml += '</div>';
+  }
+
+  el.innerHTML = `
+    <div style="text-align:center;padding:24px 0;margin-bottom:16px">
+      <div style="font-size:16px;font-weight:600;margin-bottom:4px">GW${data.gw} is live</div>
+      <div style="font-size:13px;color:var(--text2)">The deadline has passed. Matches are in progress or upcoming.</div>
+    </div>
+    ${squadHtml}
+  `;
+}
+
+// --- Phase: COMPLETE ---
+function renderCompletePhase(el, data) {
+  el.innerHTML = `
+    <div class="phase-spinner">
+      <div class="spinner-ring"></div>
+      <div class="spinner-text">GW${data.current_gw} complete. Recording results...</div>
+      <div class="spinner-sub">Importing your actual picks and comparing to recommendations.</div>
+      <div style="margin-top:16px">
+        <button class="btn btn-primary" onclick="triggerV2Tick()">Record Results</button>
+      </div>
+    </div>
+  `;
+}
+
+// --- Phase: SEASON_OVER ---
+function renderSeasonOverPhase(el, data) {
+  el.innerHTML = `
+    <div style="text-align:center;padding:48px 24px">
+      <div style="font-size:24px;font-weight:700;margin-bottom:8px">Season Over</div>
+      <div style="font-size:14px;color:var(--text2)">The FPL season has ended. Check your history below for a full season summary.</div>
+    </div>
+  `;
+}
+
+// --- GW History ---
+async function loadGWHistory(mid) {
+  if (!mid) mid = getSeasonManagerId();
+  if (!mid) return;
+  const container = document.getElementById('gwHistory');
+  if (!container) return;
+
+  try {
+    const resp = await fetch(`/api/season/outcomes?manager_id=${mid}`);
+    const d = await resp.json();
+    const outcomes = d.outcomes || [];
+
+    if (!outcomes.length) {
+      container.innerHTML = '';
+      return;
+    }
+
+    // Show last 8 GWs, newest first
+    const recent = outcomes.slice(-8).reverse();
+
+    let html = '<div class="ready-section"><h4>Recent History</h4>';
+    html += '<table class="gw-history-table"><thead><tr><th>GW</th><th>Predicted</th><th>Actual</th><th>Delta</th><th>Captain</th></tr></thead><tbody>';
+    recent.forEach(o => {
+      const delta = o.point_delta || 0;
+      const deltaColor = delta >= 0 ? 'var(--green)' : 'var(--red)';
+      const deltaSign = delta >= 0 ? '+' : '';
+      const captainIcon = o.followed_captain ? '<span style="color:var(--green)">&#x2714;</span>' : '<span style="color:var(--red)">&#x2718;</span>';
+      html += `<tr>
+        <td style="font-weight:600">GW${o.gameweek}</td>
+        <td>${o.recommended_points != null ? Number(o.recommended_points).toFixed(1) : '-'}</td>
+        <td style="font-weight:600">${o.actual_points || '-'}</td>
+        <td style="color:${deltaColor};font-weight:600">${deltaSign}${Number(delta).toFixed(1)}</td>
+        <td>${captainIcon}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = '';
+  }
+}
+
+// --- Init / Delete V2 ---
+async function initSeasonV2() {
+  const mid = getSeasonManagerId();
+  if (!mid) return alert('Enter a Manager ID');
+  localStorage.setItem('fpl_manager_id', mid);
+  try {
+    const resp = await fetch('/api/v2/season/init', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({manager_id: parseInt(mid)}),
+    });
+    const d = await resp.json();
+    if (d.error) { alert(d.error); return; }
+    // SSE task_done will trigger loadSeasonV2
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function deleteSeasonV2() {
+  const mid = getSeasonManagerId();
+  if (!mid) return;
+  if (!confirm('Delete all season data for this manager?')) return;
+  try {
+    const resp = await fetch('/api/v2/season/delete', {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({manager_id: parseInt(mid)}),
+    });
+    const d = await resp.json();
+    if (d.error) { alert(d.error); return; }
+    document.getElementById('seasonInitSection').style.display = 'block';
+    document.getElementById('seasonGWView').style.display = 'none';
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+
+// ---------------------------------------------------------------------------
+// Season Management (Legacy v1 — retained for old code paths)
+// ---------------------------------------------------------------------------
 
 function checkSeasonStatus() {
   const mid = getSeasonManagerId();
@@ -5605,11 +6656,8 @@ const _origSSEHandler = null;
 function seasonOnTaskDone() {
   const seasonPanel = document.getElementById('seasonPanel');
   if (seasonPanel && seasonPanel.classList.contains('visible')) {
-    checkSeasonStatus();
-    loadLatestRecommendation();
-    loadActionPlan();
-    loadOutcomes();
-    updateWorkflowSteps();
+    // V2: just re-poll status -- phase will have changed after tick/planning
+    loadSeasonV2();
   }
 }
 
@@ -7162,23 +8210,14 @@ function renderBTDeepDive(data) {
       </ul>
 
       <h3>Season Management</h3>
-      <p>The Season tab is the core feature. After initializing, use the <strong>Weekly Workflow</strong> sub-tab each gameweek:</p>
-      <ol>
-        <li><strong>Get Latest Data</strong> &mdash; Refreshes cached player stats, injuries, and fixture data</li>
-        <li><strong>Generate Recommendation</strong> &mdash; Produces a full plan: which transfers to make, who to captain, whether to use a chip</li>
-        <li><strong>Execute Actions</strong> &mdash; Make the recommended moves on the FPL website manually</li>
-        <li><strong>Record Results</strong> &mdash; After the GW finishes, import your actual picks to track prediction accuracy over time</li>
-      </ol>
-      <p>The <strong>Overview</strong> sub-tab shows charts for rank, points, budget, and prediction accuracy across the season.</p>
-
-      <h3>Strategy</h3>
-      <p>The Strategy sub-tab provides a 5-gameweek lookahead plan:</p>
+      <p>The Season tab is the core feature. After initializing, the app automatically detects which phase the current gameweek is in:</p>
       <ul>
-        <li><strong>Transfer Timeline</strong> &mdash; Cards showing planned transfers for each of the next 5 GWs, including free transfer banking</li>
-        <li><strong>Captain Plan</strong> &mdash; Pre-selected captains based on fixture difficulty and player upside</li>
-        <li><strong>Chip Schedule</strong> &mdash; When to play Wildcard, Free Hit, Bench Boost, and Triple Captain, based on DGW/BGW detection and synergy analysis</li>
-        <li><strong>Plan Health</strong> &mdash; Alerts if injuries, fixture changes, or prediction shifts have invalidated the current plan</li>
+        <li><strong>Planning</strong> &mdash; Click "Start Planning" to refresh data, run predictions, and generate transfer/captain/chip recommendations</li>
+        <li><strong>Ready</strong> &mdash; Review the recommended transfers, captain, and chip. Accept recommendations, make your own transfers, change the captain, or toggle a chip. Then execute on the FPL website.</li>
+        <li><strong>Live</strong> &mdash; The deadline has passed. View your planned squad while matches are in progress.</li>
+        <li><strong>Complete</strong> &mdash; GW is finished. Click "Record Results" to import actual picks and track accuracy.</li>
       </ul>
+      <p>The view updates automatically as phases change. Transfer overrides let you make custom transfers by selecting players out and replacements in.</p>
     </div>
   </div>
 </div>
