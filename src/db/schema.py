@@ -106,28 +106,6 @@ CREATE TABLE IF NOT EXISTS fixture_calendar (
     UNIQUE(season_id, team_id, gameweek)
 );
 
-CREATE TABLE IF NOT EXISTS strategic_plan (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    season_id INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
-    as_of_gw INTEGER NOT NULL,
-    plan_json TEXT,
-    chip_heatmap_json TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(season_id, as_of_gw)
-);
-
-CREATE TABLE IF NOT EXISTS plan_changelog (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    season_id INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
-    gameweek INTEGER NOT NULL,
-    change_type TEXT NOT NULL,
-    description TEXT,
-    old_value TEXT,
-    new_value TEXT,
-    reason TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
 CREATE TABLE IF NOT EXISTS watchlist (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     season_id INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,

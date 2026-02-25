@@ -6,11 +6,13 @@ from src.db.repositories import (
     DashboardRepository,
     FixtureRepository,
     OutcomeRepository,
+    PlannedSquadRepository,
     PlanRepository,
     PriceRepository,
     RecommendationRepository,
     SeasonRepository,
     SnapshotRepository,
+    WatchlistRepository,
 )
 from src.db.schema import SCHEMA_SQL, init_schema
 
@@ -27,6 +29,8 @@ __all__ = [
     "OutcomeRepository",
     "PriceRepository",
     "FixtureRepository",
-    "PlanRepository",
     "DashboardRepository",
+    "PlanRepository",
+    "PlannedSquadRepository",
+    "WatchlistRepository",
 ]

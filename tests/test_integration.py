@@ -247,8 +247,7 @@ def test_db_schema_creation(tmp_db):
     expected = {
         "season", "gw_snapshot", "recommendation",
         "recommendation_outcome", "price_tracker",
-        "fixture_calendar", "strategic_plan", "plan_changelog",
-        "watchlist",
+        "fixture_calendar", "watchlist",
     }
     assert expected.issubset(tables), f"Missing: {expected - tables}"
 

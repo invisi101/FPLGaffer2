@@ -91,7 +91,7 @@ class SeasonRepository:
             conn.commit()
 
     def clear_generated_data(self, season_id: int) -> None:
-        """Clear recommendations, outcomes, strategic plans, and changelog.
+        """Clear recommendations, outcomes, and planned squads.
 
         Called on season re-init so stale generated data does not persist.
         Preserves snapshots (actual historical data), prices, and fixtures.
@@ -99,8 +99,7 @@ class SeasonRepository:
         with connect(self.db_path) as conn:
             conn.execute("DELETE FROM recommendation WHERE season_id=?", (season_id,))
             conn.execute("DELETE FROM recommendation_outcome WHERE season_id=?", (season_id,))
-            conn.execute("DELETE FROM strategic_plan WHERE season_id=?", (season_id,))
-            conn.execute("DELETE FROM plan_changelog WHERE season_id=?", (season_id,))
+            conn.execute("DELETE FROM planned_squad WHERE season_id=?", (season_id,))
             conn.commit()
 
 
@@ -452,78 +451,26 @@ class FixtureRepository:
 
 
 # ---------------------------------------------------------------------------
-# PlanRepository
+# PlanRepository (stub — kept for old manager.py compatibility until removal)
 # ---------------------------------------------------------------------------
 
 class PlanRepository:
-    """CRUD for ``strategic_plan`` and ``plan_changelog`` tables."""
+    """Stub — strategic_plan and plan_changelog tables are removed in v2."""
 
     def __init__(self, db_path: Path | None = None):
         self.db_path = db_path or DB_PATH
 
-    def save_strategic_plan(
-        self,
-        season_id: int,
-        as_of_gw: int,
-        plan_json: str,
-        chip_heatmap_json: str,
-    ) -> None:
-        with connect(self.db_path) as conn:
-            conn.execute(
-                """INSERT INTO strategic_plan
-                   (season_id, as_of_gw, plan_json, chip_heatmap_json)
-                   VALUES (?, ?, ?, ?)
-                   ON CONFLICT(season_id, as_of_gw) DO UPDATE SET
-                     plan_json=excluded.plan_json,
-                     chip_heatmap_json=excluded.chip_heatmap_json,
-                     created_at=datetime('now')""",
-                (season_id, as_of_gw, plan_json, chip_heatmap_json),
-            )
-            conn.commit()
+    def save_strategic_plan(self, *args, **kwargs) -> None:
+        pass
 
-    def get_strategic_plan(
-        self, season_id: int, as_of_gw: int | None = None
-    ) -> dict | None:
-        with connect(self.db_path) as conn:
-            if as_of_gw is not None:
-                row = conn.execute(
-                    "SELECT * FROM strategic_plan WHERE season_id=? AND as_of_gw=?",
-                    (season_id, as_of_gw),
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    "SELECT * FROM strategic_plan WHERE season_id=? ORDER BY as_of_gw DESC LIMIT 1",
-                    (season_id,),
-                ).fetchone()
-        return dict(row) if row else None
+    def get_strategic_plan(self, *args, **kwargs) -> dict | None:
+        return None
 
-    def save_plan_change(
-        self,
-        season_id: int,
-        gameweek: int,
-        change_type: str,
-        description: str,
-        old_value: str = "",
-        new_value: str = "",
-        reason: str = "",
-    ) -> None:
-        with connect(self.db_path) as conn:
-            conn.execute(
-                """INSERT INTO plan_changelog
-                   (season_id, gameweek, change_type, description, old_value, new_value, reason)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (season_id, gameweek, change_type, description, old_value, new_value, reason),
-            )
-            conn.commit()
+    def save_plan_change(self, *args, **kwargs) -> None:
+        pass
 
-    def get_plan_changelog(self, season_id: int, limit: int = 50) -> list[dict]:
-        with connect(self.db_path) as conn:
-            rows = conn.execute(
-                """SELECT * FROM plan_changelog WHERE season_id=?
-                   ORDER BY created_at DESC LIMIT ?""",
-                (season_id, limit),
-            ).fetchall()
-        return [dict(r) for r in rows]
+    def get_plan_changelog(self, *args, **kwargs) -> list[dict]:
+        return []
 
 
 # ---------------------------------------------------------------------------

@@ -79,11 +79,19 @@ def _migration_002_planned_squad_and_phase(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migration_003_drop_strategy_tables(conn: sqlite3.Connection) -> None:
+    """Remove strategic_plan and plan_changelog tables (v2 redesign)."""
+    conn.execute("DROP TABLE IF EXISTS strategic_plan")
+    conn.execute("DROP TABLE IF EXISTS plan_changelog")
+    conn.commit()
+
+
 # Registry: version number -> migration function.
 # Each migration brings the DB from (version - 1) to (version).
 _MIGRATIONS: dict[int, callable] = {
     1: _migration_001_initial_schema,
     2: _migration_002_planned_squad_and_phase,
+    3: _migration_003_drop_strategy_tables,
 }
 
 LATEST_VERSION: int = max(_MIGRATIONS)
