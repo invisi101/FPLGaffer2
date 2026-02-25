@@ -4330,16 +4330,24 @@ function renderGWHeader(data) {
 
 // --- Phase: PLANNING ---
 function renderPlanningPhase(el, data) {
-  el.innerHTML = `
-    <div class="phase-spinner">
-      <div class="spinner-ring"></div>
-      <div class="spinner-text">Generating recommendations for GW${data.gw}...</div>
-      <div class="spinner-sub">This runs data refresh, model predictions, and transfer optimization.</div>
-      <div style="margin-top:16px">
+  const isRunning = document.querySelector('.progress-spinner.running') !== null;
+  if (isRunning) {
+    el.innerHTML = `
+      <div class="phase-spinner">
+        <div class="spinner-ring"></div>
+        <div class="spinner-text">Generating recommendations for GW${data.gw}...</div>
+        <div class="spinner-sub">This runs data refresh, model predictions, and transfer optimization.</div>
+      </div>
+    `;
+  } else {
+    el.innerHTML = `
+      <div style="text-align:center;padding:48px 24px">
+        <div style="font-size:18px;font-weight:600;margin-bottom:8px">Ready to plan GW${data.gw}</div>
+        <div style="font-size:14px;color:var(--text2);margin-bottom:20px">Generates predictions, runs transfer optimization, and picks captain.</div>
         <button class="btn btn-primary" onclick="triggerV2Tick()">Start Planning</button>
       </div>
-    </div>
-  `;
+    `;
+  }
 }
 
 async function triggerV2Tick() {
@@ -4898,16 +4906,24 @@ function renderLivePhase(el, data) {
 
 // --- Phase: COMPLETE ---
 function renderCompletePhase(el, data) {
-  el.innerHTML = `
-    <div class="phase-spinner">
-      <div class="spinner-ring"></div>
-      <div class="spinner-text">GW${data.current_gw} complete. Recording results...</div>
-      <div class="spinner-sub">Importing your actual picks and comparing to recommendations.</div>
-      <div style="margin-top:16px">
+  const isRunning = document.querySelector('.progress-spinner.running') !== null;
+  if (isRunning) {
+    el.innerHTML = `
+      <div class="phase-spinner">
+        <div class="spinner-ring"></div>
+        <div class="spinner-text">GW${data.current_gw} complete. Recording results...</div>
+        <div class="spinner-sub">Importing your actual picks and comparing to recommendations.</div>
+      </div>
+    `;
+  } else {
+    el.innerHTML = `
+      <div style="text-align:center;padding:48px 24px">
+        <div style="font-size:18px;font-weight:600;margin-bottom:8px">GW${data.current_gw} Complete</div>
+        <div style="font-size:14px;color:var(--text2);margin-bottom:20px">All fixtures finished. Record your results to advance to GW${data.gw} planning.</div>
         <button class="btn btn-primary" onclick="triggerV2Tick()">Record Results</button>
       </div>
-    </div>
-  `;
+    `;
+  }
 }
 
 // --- Phase: SEASON_OVER ---
