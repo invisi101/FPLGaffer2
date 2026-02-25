@@ -1081,3 +1081,32 @@ class TestUserActions:
         r2 = mgr.make_transfer(123, player_out_id=108, player_in_id=201)
         assert r2.get("status") == "transfer_made"
         assert r2["planned_squad"]["hits"] == 1
+
+
+# ---------------------------------------------------------------------------
+# init_season
+# ---------------------------------------------------------------------------
+
+class TestInitSeason:
+    @pytest.fixture
+    def db_path(self, tmp_path):
+        path = tmp_path / "test.db"
+        from src.db.connection import connect
+        with connect(path) as conn:
+            from src.db.schema import init_schema
+            from src.db.migrations import apply_migrations
+            init_schema(conn)
+            apply_migrations(conn)
+        return path
+
+    def test_init_season_method_exists(self, db_path):
+        from src.season.manager_v2 import SeasonManagerV2
+        mgr = SeasonManagerV2(db_path=db_path)
+        assert hasattr(mgr, "init_season")
+        assert callable(mgr.init_season)
+
+    def test_track_prices_simple_method_exists(self, db_path):
+        from src.season.manager_v2 import SeasonManagerV2
+        mgr = SeasonManagerV2(db_path=db_path)
+        assert hasattr(mgr, "_track_prices_simple")
+        assert callable(mgr._track_prices_simple)

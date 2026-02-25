@@ -273,6 +273,235 @@ class SeasonManagerV2:
         return []
 
     # ------------------------------------------------------------------
+    # Season initialisation
+    # ------------------------------------------------------------------
+
+    def init_season(self, manager_id: int, progress_fn=None) -> dict:
+        """Initialize or re-initialize a season from FPL API data.
+
+        Fetches manager info, backfills GW history, saves fixtures/prices.
+        Sets phase to PLANNING so tick() will generate the first recommendation.
+        """
+        from src.data.fpl_api import (
+            fetch_manager_entry, fetch_manager_history,
+            fetch_manager_picks, fetch_manager_transfers, fetch_fpl_api,
+        )
+        from src.season.fixtures import save_fixture_calendar
+
+        def log(msg, **kw):
+            if progress_fn:
+                progress_fn(msg, **kw)
+            logger.info(msg)
+
+        # 1. Fetch manager data
+        log("Fetching manager data...")
+        entry = fetch_manager_entry(manager_id)
+        if not entry:
+            return {"error": f"Manager {manager_id} not found"}
+
+        history = fetch_manager_history(manager_id)
+        if not history:
+            return {"error": f"Could not fetch history for manager {manager_id}"}
+
+        # 2. Detect season info
+        manager_name = (
+            f"{entry.get('player_first_name', '')} "
+            f"{entry.get('player_last_name', '')}"
+        ).strip()
+        team_name = entry.get("name", "")
+
+        current_events = history.get("current", [])
+        if not current_events:
+            # Pre-season: create season record, set phase to PLANNING
+            log("Pre-season detected, creating season record...")
+            season_id = self.seasons.create_season(
+                manager_id=manager_id,
+                manager_name=manager_name,
+                team_name=team_name,
+                start_gw=1,
+            )
+            self.seasons.update_phase(season_id, GWPhase.PLANNING.value)
+            return {"status": "initialized", "season_id": season_id, "pre_season": True}
+
+        start_gw = current_events[0].get("event", 1)
+        latest_gw = current_events[-1].get("event", start_gw)
+
+        # 3. Create season record
+        log(f"Creating season (GW{start_gw}-{latest_gw})...")
+        season_id = self.seasons.create_season(
+            manager_id=manager_id,
+            manager_name=manager_name,
+            team_name=team_name,
+            start_gw=start_gw,
+        )
+        self.seasons.update_season_gw(season_id, latest_gw)
+        self.seasons.clear_generated_data(season_id)
+
+        # 4. Refresh FPL API data to ensure cache is fresh
+        log("Refreshing FPL data...")
+        fetch_fpl_api(force=True)
+        bootstrap = load_bootstrap()
+        if not bootstrap:
+            return {"error": "Could not load bootstrap data"}
+
+        elements_map = {el["id"]: el for el in bootstrap.get("elements", [])}
+        id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
+
+        # 5. Fetch transfers for the season
+        transfers = fetch_manager_transfers(manager_id) or []
+        transfers_by_gw: dict[int, list] = {}
+        for t in transfers:
+            gw = t.get("event")
+            transfers_by_gw.setdefault(gw, []).append(t)
+
+        # 6. Backfill GW snapshots
+        chips = history.get("chips", [])
+        chip_by_gw = {c["event"]: c["name"] for c in chips}
+
+        for gw_entry in current_events:
+            gw = gw_entry.get("event")
+            log(f"Backfilling GW{gw}...", progress=gw / latest_gw)
+
+            try:
+                picks_data = fetch_manager_picks(manager_id, gw)
+            except Exception:
+                logger.warning("Could not fetch picks for GW%d", gw)
+                continue
+
+            picks = picks_data.get("picks", []) if picks_data else []
+            entry_hist = picks_data.get("entry_history", {}) if picks_data else {}
+
+            # Build squad JSON
+            squad = []
+            captain_id = None
+            captain_name = None
+            for pick in picks:
+                pid = pick["element"]
+                el = elements_map.get(pid, {})
+                team_id = el.get("team")
+                pos = ELEMENT_TYPE_MAP.get(el.get("element_type"), "?")
+                multiplier = pick.get("multiplier", 1)
+
+                player_dict = {
+                    "player_id": pid,
+                    "web_name": el.get("web_name", f"ID{pid}"),
+                    "position": pos,
+                    "team_code": id_to_code.get(team_id),
+                    "cost": round(el.get("now_cost", 0) / 10, 1),
+                    "starter": pick.get("position", 12) <= 11,
+                    "is_captain": pick.get("is_captain", False),
+                    "multiplier": multiplier,
+                }
+                squad.append(player_dict)
+
+                if pick.get("is_captain"):
+                    captain_id = pid
+                    captain_name = el.get("web_name", f"ID{pid}")
+
+            # GW transfers
+            gw_transfers = transfers_by_gw.get(gw, [])
+            transfers_in = [
+                {
+                    "player_id": t["element_in"],
+                    "web_name": elements_map.get(t["element_in"], {}).get("web_name", "?"),
+                }
+                for t in gw_transfers
+            ]
+            transfers_out = [
+                {
+                    "player_id": t["element_out"],
+                    "web_name": elements_map.get(t["element_out"], {}).get("web_name", "?"),
+                }
+                for t in gw_transfers
+            ]
+
+            self.snapshots.save_gw_snapshot(
+                season_id=season_id,
+                gameweek=gw,
+                squad_json=json.dumps(squad),
+                bank=round(entry_hist.get("bank", 0) / 10, 1),
+                team_value=round(entry_hist.get("value", 0) / 10, 1),
+                free_transfers=None,  # Can't reliably calculate retroactively
+                chip_used=chip_by_gw.get(gw),
+                points=entry_hist.get("points"),
+                total_points=entry_hist.get("total_points"),
+                overall_rank=entry_hist.get("overall_rank"),
+                transfers_in_json=json.dumps(transfers_in),
+                transfers_out_json=json.dumps(transfers_out),
+                captain_id=captain_id,
+                captain_name=captain_name,
+                transfers_cost=entry_hist.get("event_transfers_cost", 0),
+            )
+
+        # 7. Save fixture calendar
+        log("Saving fixtures...")
+        fixtures_raw = self._load_fixtures()
+        if bootstrap and fixtures_raw:
+            save_fixture_calendar(
+                season_id=season_id,
+                bootstrap=bootstrap,
+                fixtures=fixtures_raw,
+                fixture_repo=self.fixtures,
+            )
+
+        # 8. Track prices
+        log("Tracking prices...")
+        self._track_prices_simple(season_id, manager_id, bootstrap)
+
+        # 9. Set phase to PLANNING
+        self.seasons.update_phase(season_id, GWPhase.PLANNING.value)
+
+        log("Season initialized!", progress=1.0)
+        return {"status": "initialized", "season_id": season_id, "latest_gw": latest_gw}
+
+    def _track_prices_simple(self, season_id: int, manager_id: int, bootstrap: dict | None) -> None:
+        """Snapshot prices for current squad + watchlist players."""
+        if not bootstrap:
+            return
+        elements_map = {el["id"]: el for el in bootstrap.get("elements", [])}
+        id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
+
+        # Get latest snapshot squad
+        snapshots = self.snapshots.get_snapshots(season_id)
+        squad_ids: set[int] = set()
+        if snapshots:
+            latest = snapshots[-1]
+            try:
+                squad = json.loads(latest.get("squad_json", "[]"))
+                squad_ids = {
+                    p.get("player_id") or p.get("id")
+                    for p in squad
+                    if isinstance(p, dict)
+                }
+            except (TypeError, json.JSONDecodeError):
+                pass
+
+        # Add watchlist
+        watchlist = self.watchlist.get_watchlist(season_id)
+        watchlist_ids = {w["player_id"] for w in watchlist}
+        all_ids = squad_ids | watchlist_ids
+
+        if not all_ids:
+            return
+
+        price_snapshots = []
+        for pid in all_ids:
+            el = elements_map.get(pid)
+            if not el:
+                continue
+            price_snapshots.append({
+                "player_id": pid,
+                "web_name": el.get("web_name"),
+                "team_code": id_to_code.get(el.get("team")),
+                "price": round(el.get("now_cost", 0) / 10, 1),
+                "transfers_in_event": el.get("transfers_in_event", 0),
+                "transfers_out_event": el.get("transfers_out_event", 0),
+            })
+
+        if price_snapshots:
+            self.prices.save_price_snapshots_bulk(season_id, price_snapshots)
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
