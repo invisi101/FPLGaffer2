@@ -1236,6 +1236,77 @@ def _make_mock_live_data():
     }
 
 
+class TestTickLive:
+    """Tests for _tick_live() — detect GW completion and transition to COMPLETE."""
+
+    @pytest.fixture
+    def db_path(self, tmp_path):
+        path = tmp_path / "test.db"
+        from src.db.connection import connect
+        with connect(path) as conn:
+            from src.db.schema import init_schema
+            from src.db.migrations import apply_migrations
+            init_schema(conn)
+            apply_migrations(conn)
+        return path
+
+    @pytest.fixture
+    def live_setup(self, db_path):
+        """Create a season in LIVE phase with a recommendation for GW26."""
+        from src.db.repositories import SeasonRepository, RecommendationRepository
+        repo = SeasonRepository(db_path)
+        sid = repo.create_season(manager_id=123, season_name="2025-2026")
+        repo.update_phase(sid, "live")
+        RecommendationRepository(db_path).save_recommendation(
+            season_id=sid, gameweek=26, captain_id=1, captain_name="Salah",
+        )
+        return db_path, sid
+
+    def test_tick_live_transitions_when_all_finished(self, live_setup, monkeypatch):
+        """_tick_live transitions to COMPLETE and returns gw_complete alert."""
+        db_path, sid = live_setup
+        from src.season.manager_v2 import SeasonManagerV2
+        from src.db.repositories import SeasonRepository
+
+        mgr = SeasonManagerV2(db_path=db_path)
+        monkeypatch.setattr(mgr, "_is_gw_finished", lambda gw: True)
+
+        status = {
+            "active": True, "phase": "live", "gw": 26, "current_gw": 25,
+            "season_id": sid, "manager_id": 123,
+        }
+        season = SeasonRepository(db_path).get_season(123)
+        alerts = mgr._tick_live(123, season, status)
+
+        assert len(alerts) == 1
+        assert alerts[0]["type"] == "gw_complete"
+        assert "GW25" in alerts[0]["message"]
+        # DB phase should be updated to COMPLETE
+        updated = SeasonRepository(db_path).get_season(123)
+        assert updated["phase"] == "complete"
+
+    def test_tick_live_no_transition_when_fixtures_pending(self, live_setup, monkeypatch):
+        """_tick_live returns empty alerts when fixtures are still in progress."""
+        db_path, sid = live_setup
+        from src.season.manager_v2 import SeasonManagerV2
+        from src.db.repositories import SeasonRepository
+
+        mgr = SeasonManagerV2(db_path=db_path)
+        monkeypatch.setattr(mgr, "_is_gw_finished", lambda gw: False)
+
+        status = {
+            "active": True, "phase": "live", "gw": 26, "current_gw": 25,
+            "season_id": sid, "manager_id": 123,
+        }
+        season = SeasonRepository(db_path).get_season(123)
+        alerts = mgr._tick_live(123, season, status)
+
+        assert alerts == []
+        # Phase should remain LIVE
+        updated = SeasonRepository(db_path).get_season(123)
+        assert updated["phase"] == "live"
+
+
 class TestTickComplete:
     """Tests for _tick_complete() — auto-record results on GW completion."""
 
@@ -1441,10 +1512,10 @@ class TestTickComplete:
         from src.db.repositories import SeasonRepository
 
         # Make bootstrap fetch fail
-        monkeypatch.setattr(
-            "src.data.fpl_api.fetch_fpl_api",
-            lambda *a, **kw: (_ for _ in ()).throw(ConnectionError("API down")),
-        )
+        def _raise(*a, **kw):
+            raise ConnectionError("API down")
+
+        monkeypatch.setattr("src.data.fpl_api.fetch_fpl_api", _raise)
 
         mgr = SeasonManagerV2(db_path=db_path)
         status = {

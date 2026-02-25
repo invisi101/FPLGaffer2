@@ -991,7 +991,11 @@ class SeasonManagerV2:
 
             actual_chip = chip_map.get(completed_gw)
             recommended_chip = rec.get("chip_suggestion")
-            followed_chip = 1 if actual_chip == recommended_chip else 0
+            # Only count as "followed" when a chip was explicitly recommended
+            if recommended_chip:
+                followed_chip = 1 if actual_chip == recommended_chip else 0
+            else:
+                followed_chip = 1 if not actual_chip else 0
 
             self.outcomes.save_outcome(
                 season_id=season_id,
