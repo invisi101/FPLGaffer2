@@ -1260,20 +1260,44 @@ class SeasonManager:
         elements_map = {el["id"]: el for el in bootstrap.get("elements", [])}
         id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
 
-        # Get latest snapshot squad
-        snapshots = self.snapshots.get_snapshots(season_id)
+        # Get squad IDs — prefer planned squad (correct after FH revert),
+        # fall back to latest snapshot.
         squad_ids: set[int] = set()
-        if snapshots:
-            latest = snapshots[-1]
-            try:
-                squad = json.loads(latest.get("squad_json", "[]"))
-                squad_ids = {
-                    p.get("player_id") or p.get("id")
-                    for p in squad
-                    if isinstance(p, dict)
-                }
-            except (TypeError, json.JSONDecodeError):
-                pass
+
+        # 1. Try planned squad (populated by _tick_planning with FH revert)
+        season = self.seasons.get_season(manager_id)
+        next_gw = None
+        if season:
+            from src.api.helpers import get_next_gw
+            bs = bootstrap
+            next_gw = get_next_gw(bs) if bs else None
+        if next_gw:
+            planned = self.planned_squads.get_planned_squad(season_id, next_gw)
+            if planned and planned.get("squad_json"):
+                players = planned["squad_json"].get("players", [])
+                if players:
+                    squad_ids = {
+                        p.get("player_id") or p.get("id")
+                        for p in players
+                        if isinstance(p, dict)
+                    }
+
+        # 2. Fallback to latest snapshot (with FH revert)
+        if not squad_ids:
+            snapshots = self.snapshots.get_snapshots(season_id)
+            if snapshots:
+                snap = snapshots[-1]
+                if snap.get("chip_used") == "freehit" and len(snapshots) >= 2:
+                    snap = snapshots[-2]
+                try:
+                    squad = json.loads(snap.get("squad_json", "[]"))
+                    squad_ids = {
+                        p.get("player_id") or p.get("id")
+                        for p in squad
+                        if isinstance(p, dict)
+                    }
+                except (TypeError, json.JSONDecodeError):
+                    pass
 
         # Add watchlist
         watchlist = self.watchlist.get_watchlist(season_id)
@@ -1500,6 +1524,46 @@ class SeasonManager:
                 fixtures=fixtures_raw,
                 fixture_repo=self.fixtures,
             )
+
+    # ------------------------------------------------------------------
+    # Price wrappers (used by prices_bp)
+    # ------------------------------------------------------------------
+
+    def get_price_alerts(self, season_id: int) -> list[dict]:
+        """Return price alerts based on current bootstrap transfer data."""
+        from src.strategy.price_tracker import get_price_alerts
+
+        bootstrap = load_bootstrap()
+        if not bootstrap:
+            return []
+        return get_price_alerts(bootstrap)
+
+    def track_prices(self, season_id: int, manager_id: int) -> None:
+        """Refresh price snapshots for squad + watchlist players."""
+        from src.data.fpl_api import fetch_fpl_api
+
+        bootstrap = fetch_fpl_api("bootstrap", force=True)
+        if not bootstrap:
+            return
+        self._track_prices_simple(season_id, manager_id, bootstrap)
+
+    def predict_price_changes(self, season_id: int) -> list[dict]:
+        """Predict price movements from ownership and transfer data."""
+        from src.strategy.price_tracker import predict_price_changes
+
+        bootstrap = load_bootstrap()
+        if not bootstrap:
+            return []
+        return predict_price_changes(bootstrap)
+
+    def get_price_history(
+        self, season_id: int, player_ids: list[int] | None = None, days: int = 14,
+    ) -> dict:
+        """Return price history for tracked players."""
+        from src.strategy.price_tracker import get_price_history
+
+        all_history = self.prices.get_price_history(season_id)
+        return get_price_history(all_history, player_ids=player_ids, days=days)
 
     # ------------------------------------------------------------------
     # User action methods — callable during READY phase
