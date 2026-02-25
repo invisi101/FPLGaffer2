@@ -167,3 +167,62 @@ class TestAvailabilityAdjustments:
             p1_orig = orig[orig["player_id"] == 1].iloc[0]["predicted_points"]
             p1_adj = adj[adj["player_id"] == 1].iloc[0]["predicted_points"]
             assert p1_orig == p1_adj
+
+
+# ---------------------------------------------------------------------------
+# Squad injury checking
+# ---------------------------------------------------------------------------
+
+
+class TestCheckSquadInjuries:
+    """Tests for src.strategy.reactive.check_squad_injuries."""
+
+    def test_detects_injured_player(self):
+        from src.strategy.reactive import check_squad_injuries
+
+        bootstrap = {
+            "elements": [
+                {"id": 1, "web_name": "Salah", "status": "i", "chance_of_playing_next_round": 0},
+                {"id": 2, "web_name": "Haaland", "status": "a", "chance_of_playing_next_round": 100},
+            ],
+        }
+        issues = check_squad_injuries(bootstrap, {1, 2})
+        assert len(issues) == 1
+        assert issues[0]["player_id"] == 1
+        assert issues[0]["web_name"] == "Salah"
+
+    def test_detects_doubtful_player(self):
+        from src.strategy.reactive import check_squad_injuries
+
+        bootstrap = {
+            "elements": [
+                {"id": 3, "web_name": "Saka", "status": "a", "chance_of_playing_next_round": 50},
+            ],
+        }
+        issues = check_squad_injuries(bootstrap, {3})
+        assert len(issues) == 1
+        assert issues[0]["chance_of_playing"] == 50
+
+    def test_healthy_squad_returns_empty(self):
+        from src.strategy.reactive import check_squad_injuries
+
+        bootstrap = {
+            "elements": [
+                {"id": 1, "web_name": "GK1", "status": "a", "chance_of_playing_next_round": 100},
+                {"id": 2, "web_name": "DEF1", "status": "a", "chance_of_playing_next_round": None},
+            ],
+        }
+        issues = check_squad_injuries(bootstrap, {1, 2})
+        assert issues == []
+
+    def test_ignores_players_not_in_squad(self):
+        from src.strategy.reactive import check_squad_injuries
+
+        bootstrap = {
+            "elements": [
+                {"id": 99, "web_name": "Injured", "status": "i", "chance_of_playing_next_round": 0},
+            ],
+        }
+        # Player 99 not in our squad
+        issues = check_squad_injuries(bootstrap, {1, 2, 3})
+        assert issues == []

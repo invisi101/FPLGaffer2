@@ -13,6 +13,7 @@ from src.strategy.price_tracker import (
 )
 from src.strategy.reactive import (
     apply_availability_adjustments,
+    check_squad_injuries,
 )
 from src.strategy.transfer_planner import MultiWeekPlanner
 
@@ -21,6 +22,7 @@ __all__ = [
     "MultiWeekPlanner",
     # Reactive functions
     "apply_availability_adjustments",
+    "check_squad_injuries",
     # Price functions
     "track_prices",
     "get_price_alerts",
