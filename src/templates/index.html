@@ -4294,7 +4294,8 @@ function setupSeasonV2Poll(data) {
 
 function renderGWHeader(data) {
   const el = document.getElementById('gwHeader');
-  const gw = data.gw || '?';
+  // In COMPLETE phase, show the completed GW (current_gw), not next GW
+  const gw = (data.phase === 'complete' ? data.current_gw : data.gw) || '?';
   const phase = data.phase || 'planning';
   const phaseLabel = {
     planning: 'Planning', ready: 'Ready', live: 'Live',

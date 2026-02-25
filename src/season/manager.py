@@ -99,6 +99,16 @@ class SeasonManager:
         # Fixture completion for current GW
         all_fixtures_finished = self._is_gw_finished(current_gw) if current_gw else False
 
+        # If results already recorded for current GW, don't stay in COMPLETE.
+        # Without this, detect_phase sees "all fixtures finished" and returns
+        # COMPLETE forever (fixtures don't un-finish).
+        results_recorded = False
+        if all_fixtures_finished and current_gw:
+            existing_snapshot = self.snapshots.get_snapshot(season_id, current_gw)
+            if existing_snapshot:
+                results_recorded = True
+                all_fixtures_finished = False  # Override: already processed
+
         # Recommendation existence for next GW
         rec = self.recommendations.get_recommendation(season_id, next_gw) if next_gw else None
         has_recommendation = rec is not None
