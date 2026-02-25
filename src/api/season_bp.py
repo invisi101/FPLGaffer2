@@ -14,10 +14,10 @@ season_bp = Blueprint("season", __name__)
 
 
 def _get_mgr():
-    """Lazy-init SeasonManager singleton."""
-    from src.season.manager import SeasonManager
+    """Lazy-init SeasonManagerV2 singleton."""
+    from src.season.manager_v2 import SeasonManagerV2
     if not hasattr(_get_mgr, "_mgr"):
-        _get_mgr._mgr = SeasonManager()
+        _get_mgr._mgr = SeasonManagerV2()
     return _get_mgr._mgr
 
 
@@ -105,7 +105,7 @@ def api_season_generate_recommendation():
     mgr = _get_mgr()
 
     def do_recommend():
-        mgr.generate_recommendation(manager_id, progress_fn=broadcast)
+        mgr.tick(manager_id, progress_fn=broadcast)
 
     started = run_in_background("Generate Recommendation", do_recommend)
     if not started:
@@ -127,7 +127,7 @@ def api_season_record_results():
     mgr = _get_mgr()
 
     def do_record():
-        mgr.record_actual_results(manager_id, progress_fn=broadcast)
+        mgr.tick(manager_id, progress_fn=broadcast)
 
     started = run_in_background("Record Results", do_record)
     if not started:
@@ -197,7 +197,7 @@ def api_season_chips():
     if serr:
         return serr
 
-    chips_used = mgr.dashboard_repo.get_chips_status(season["id"])
+    chips_used = mgr.dashboard.get_chips_status(season["id"])
     next_gw = get_next_gw()
     if next_gw is None:
         next_gw = 1
@@ -276,7 +276,7 @@ def api_season_transfer_history():
     if serr:
         return serr
 
-    history = mgr.dashboard_repo.get_transfer_history(season["id"])
+    history = mgr.dashboard.get_transfer_history(season["id"])
     return jsonify({"transfer_history": history})
 
 

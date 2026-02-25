@@ -14,9 +14,9 @@ strategy_bp = Blueprint("strategy", __name__)
 
 
 def _get_mgr():
-    from src.season.manager import SeasonManager
+    from src.season.manager_v2 import SeasonManagerV2
     if not hasattr(_get_mgr, "_mgr"):
-        _get_mgr._mgr = SeasonManager()
+        _get_mgr._mgr = SeasonManagerV2()
     return _get_mgr._mgr
 
 
@@ -73,7 +73,7 @@ def api_preseason_generate():
     mgr = _get_mgr()
 
     def do_preseason():
-        mgr.generate_preseason_plan(manager_id, progress_fn=broadcast)
+        mgr.tick(manager_id, progress_fn=broadcast)
 
     started = run_in_background("Pre-Season Plan", do_preseason)
     if not started:

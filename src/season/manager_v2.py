@@ -1392,6 +1392,92 @@ class SeasonManagerV2:
         return None
 
     # ------------------------------------------------------------------
+    # Compatibility wrappers (used by season_bp / strategy_bp)
+    # ------------------------------------------------------------------
+
+    def get_outcomes(self, manager_id: int) -> list[dict]:
+        """Return all recorded outcomes for a manager's season."""
+        season = self.seasons.get_season(manager_id)
+        if not season:
+            return []
+        return self.outcomes.get_outcomes(season["id"])
+
+    def get_dashboard(self, manager_id: int) -> dict:
+        """Return dashboard data for a manager."""
+        from src.season.dashboard import get_dashboard
+
+        return get_dashboard(
+            manager_id,
+            self.seasons,
+            self.snapshots,
+            self.recommendations,
+            self.outcomes,
+            self.dashboard,
+        )
+
+    def get_action_plan(self, manager_id: int) -> dict:
+        """Return a simplified action plan from the latest recommendation."""
+        season = self.seasons.get_season(manager_id)
+        if not season:
+            return {"error": "No active season"}
+
+        bootstrap = load_bootstrap()
+        next_gw = get_next_gw(bootstrap) if bootstrap else None
+        if not next_gw:
+            return {"error": "Cannot determine next GW"}
+
+        rec = self.recommendations.get_recommendation(season["id"], next_gw)
+        if not rec:
+            return {"error": "No recommendation for next GW"}
+
+        # Build simple action steps from recommendation
+        steps = []
+        try:
+            transfers = json.loads(rec.get("transfers_json") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            transfers = []
+
+        for t in transfers:
+            steps.append({
+                "type": "transfer",
+                "out": t.get("out", {}),
+                "in": t.get("in", {}),
+            })
+
+        if rec.get("captain_name"):
+            steps.append({
+                "type": "captain",
+                "description": f"Set captain to {rec['captain_name']}",
+            })
+
+        if rec.get("chip_suggestion"):
+            steps.append({
+                "type": "chip",
+                "description": f"Activate {rec['chip_suggestion']}",
+            })
+
+        return {
+            "gameweek": next_gw,
+            "steps": steps,
+            "predicted_points": rec.get("predicted_points"),
+            "captain": {"id": rec.get("captain_id"), "name": rec.get("captain_name")},
+        }
+
+    def update_fixture_calendar(self, season_id: int) -> None:
+        """Rebuild the fixture calendar from current data."""
+        from src.season.fixtures import save_fixture_calendar
+
+        bootstrap = load_bootstrap()
+        fixtures_raw = self._load_fixtures()
+        if bootstrap and fixtures_raw:
+            save_fixture_calendar(
+                season_id=season_id,
+                bootstrap=bootstrap,
+                fixtures=fixtures_raw,
+                fixture_repo=self.fixtures,
+            )
+
+    # ------------------------------------------------------------------
     # User action methods — callable during READY phase
     # ------------------------------------------------------------------
 
