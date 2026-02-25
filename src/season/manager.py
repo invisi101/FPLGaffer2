@@ -144,6 +144,19 @@ class SeasonManager:
             else None
         )
 
+        # Chips already used this half-season
+        chips_used_rows = self.dashboard.get_chips_status(season_id)
+        half = 1 if (next_gw or 1) <= 19 else 2
+        chips_used = [
+            r["chip_used"]
+            for r in chips_used_rows
+            if r.get("chip_used")
+            and (
+                (half == 1 and r.get("gameweek", 0) <= 19)
+                or (half == 2 and r.get("gameweek", 0) >= 20)
+            )
+        ]
+
         return {
             "active": True,
             "phase": detected.value,
@@ -153,6 +166,7 @@ class SeasonManager:
             "deadline_passed": deadline_passed,
             "has_recommendation": has_recommendation,
             "planned_squad": planned,
+            "chips_used": chips_used,
             "season_id": season_id,
             "manager_id": manager_id,
         }

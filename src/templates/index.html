@@ -1807,7 +1807,7 @@
     cursor: pointer;
     transition: all 0.15s;
   }
-  .chip-toggle:hover { border-color: var(--accent); color: var(--text); }
+  .chip-toggle:hover:not(.used) { border-color: var(--accent); color: var(--text); }
   .chip-toggle.active { background: var(--green); border-color: var(--green); color: #000; }
   .chip-toggle.used { opacity: 0.35; cursor: not-allowed; text-decoration: line-through; }
 
@@ -4507,10 +4507,15 @@ function renderReadyPhase(el, data) {
   html += '<div class="chip-toggles">';
   const chipNames = ['bboost', '3xc', 'freehit', 'wildcard'];
   const chipLabels = {bboost: 'Bench Boost', '3xc': 'Triple Captain', freehit: 'Free Hit', wildcard: 'Wildcard'};
+  const chipsUsed = data.chips_used || [];
   chipNames.forEach(c => {
+    const isUsed = chipsUsed.includes(c);
     const isActive = chip === c;
-    const cls = isActive ? 'chip-toggle active' : 'chip-toggle';
-    html += `<button class="${cls}" onclick="toggleChipV2('${c}')">${chipLabels[c]}</button>`;
+    const cls = isUsed ? 'chip-toggle used' : isActive ? 'chip-toggle active' : 'chip-toggle';
+    const disabled = isUsed ? 'disabled' : '';
+    const onclick = isUsed ? '' : `onclick="toggleChipV2('${c}')"`;
+    const label = isUsed ? `${chipLabels[c]} (Used)` : chipLabels[c];
+    html += `<button class="${cls}" ${onclick} ${disabled}>${label}</button>`;
   });
   html += '</div>';
   if (chip) {
