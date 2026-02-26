@@ -1094,9 +1094,9 @@ class SeasonManager:
         )
         from src.season.fixtures import save_fixture_calendar
 
-        def log(msg, **kw):
+        def log(msg, **_kw):
             if progress_fn:
-                progress_fn(msg, **kw)
+                progress_fn(msg)
             logger.info(msg)
 
         # 1. Fetch manager data
@@ -1305,6 +1305,20 @@ class SeasonManager:
                     }
                 except (TypeError, json.JSONDecodeError):
                     pass
+
+        # 3. Fallback to FPL API picks (fresh install, no snapshot yet)
+        if not squad_ids:
+            try:
+                from src.data.fpl_api import fetch_manager_picks
+                from src.api.helpers import get_next_gw
+                gw = next_gw or get_next_gw(bootstrap)
+                if gw:
+                    picks_data = fetch_manager_picks(manager_id, gw - 1) if gw > 1 else None
+                    if picks_data:
+                        picks = picks_data.get("picks", [])
+                        squad_ids = {p["element"] for p in picks}
+            except Exception:
+                pass
 
         # Add watchlist
         watchlist = self.watchlist.get_watchlist(season_id)
