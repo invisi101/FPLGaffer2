@@ -20,6 +20,7 @@ def create_app() -> Flask:
     from src.api.backtest_bp import backtest_bp
     from src.api.compare_bp import compare_bp
     from src.api.season_v2_bp import season_v2_bp
+    from src.api.prices_standalone_bp import prices_standalone_bp
 
     app.register_blueprint(core_bp)
     app.register_blueprint(team_bp)
@@ -29,6 +30,7 @@ def create_app() -> Flask:
     app.register_blueprint(backtest_bp)
     app.register_blueprint(compare_bp)
     app.register_blueprint(season_v2_bp, url_prefix="/api/v2/season")
+    app.register_blueprint(prices_standalone_bp, url_prefix="/api/prices")
 
     # Start background scheduler if GAFFER_MANAGER_ID is set.
     manager_id_str = os.environ.get("GAFFER_MANAGER_ID")

@@ -574,6 +574,54 @@ class WatchlistRepository:
 # PlannedSquadRepository
 # ---------------------------------------------------------------------------
 
+class StandaloneWatchlistRepository:
+    """CRUD for the ``watchlist_standalone`` table (keyed by manager_id)."""
+
+    def __init__(self, db_path: Path | None = None):
+        self.db_path = db_path or DB_PATH
+
+    def get_watchlist(self, manager_id: int) -> list[dict]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT * FROM watchlist_standalone WHERE manager_id=? ORDER BY added_date DESC",
+                (manager_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_to_watchlist(
+        self, manager_id: int, player_id: int, **kwargs
+    ) -> None:
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO watchlist_standalone
+                   (manager_id, player_id, web_name, team_code, price_when_added)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(manager_id, player_id) DO UPDATE SET
+                     web_name=excluded.web_name,
+                     team_code=excluded.team_code,
+                     price_when_added=excluded.price_when_added""",
+                (
+                    manager_id, player_id,
+                    kwargs.get("web_name"),
+                    kwargs.get("team_code"),
+                    kwargs.get("price_when_added"),
+                ),
+            )
+            conn.commit()
+
+    def remove_from_watchlist(self, manager_id: int, player_id: int) -> None:
+        with connect(self.db_path) as conn:
+            conn.execute(
+                "DELETE FROM watchlist_standalone WHERE manager_id=? AND player_id=?",
+                (manager_id, player_id),
+            )
+            conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# PlannedSquadRepository
+# ---------------------------------------------------------------------------
+
 class PlannedSquadRepository:
     """CRUD for the ``planned_squad`` table."""
 

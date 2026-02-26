@@ -4449,9 +4449,9 @@ function renderReadyPhase(el, data) {
   }
 
   const sq = ps.squad_json;
-  const players = sq.players || [];
-  const starters = players.filter(p => p.starter);
-  const bench = players.filter(p => !p.starter);
+  const recPlayers = sq.players || [];
+  const recStarters = recPlayers.filter(p => p.starter);
+  const recBench = recPlayers.filter(p => !p.starter);
   const transfersIn = sq.transfers_in || [];
   const transfersOut = sq.transfers_out || [];
   const captainId = sq.captain_id;
@@ -4461,6 +4461,18 @@ function renderReadyPhase(el, data) {
   const freeFTs = sq.free_transfers || 1;
   const predictedPts = sq.predicted_points;
   const bank = sq.bank;
+
+  // Current (pre-transfer) squad — if available
+  const curPlayers = (sq.current_squad_players && sq.current_squad_players.length) ? sq.current_squad_players : recPlayers;
+  const curStarters = curPlayers.filter(p => p.starter);
+  const curBench = curPlayers.filter(p => !p.starter);
+  const hasCurrentSquad = sq.current_squad_players && sq.current_squad_players.length > 0;
+
+  // Show current squad by default, recommended after accept
+  const showRec = (source === 'user_override' || source === 'accepted');
+  const players = showRec ? recPlayers : curPlayers;
+  const starters = showRec ? recStarters : curStarters;
+  const bench = showRec ? recBench : curBench;
 
   let html = '';
 
@@ -4540,7 +4552,8 @@ function renderReadyPhase(el, data) {
 
   // --- Squad section (starters + bench) ---
   html += '<div class="ready-section">';
-  html += '<h4><span class="section-icon">&#x26BD;</span> Starting XI</h4>';
+  const squadLabel = showRec ? 'Recommended XI' : 'Current XI';
+  html += `<h4><span class="section-icon">&#x26BD;</span> ${squadLabel}</h4>`;
   html += '<div class="squad-grid">';
   const posOrder = {GKP: 0, DEF: 1, MID: 2, FWD: 3};
   starters.sort((a, b) => (posOrder[a.position] || 9) - (posOrder[b.position] || 9));
@@ -4580,7 +4593,8 @@ function renderReadyPhase(el, data) {
 
   // --- Pitch visualization ---
   html += '<div class="ready-section">';
-  html += '<h4><span class="section-icon">&#x26BD;</span> Pitch View</h4>';
+  const pitchLabel = showRec ? 'Recommended Squad' : 'Current Squad';
+  html += `<h4><span class="section-icon">&#x26BD;</span> ${pitchLabel}</h4>`;
   const fwd = starters.filter(p => p.position === 'FWD');
   const mid = starters.filter(p => p.position === 'MID');
   const def_ = starters.filter(p => p.position === 'DEF');
@@ -4789,7 +4803,10 @@ async function toggleChipV2(chipName) {
 function openMultiTransferModal() {
   const ps = _seasonV2StatusCache?.planned_squad;
   if (!ps || !ps.squad_json) { alert('No planned squad data.'); return; }
-  _multiTransferState = { phase: 'sell', playersOut: [], playersIn: [], allCandidates: [], buyingPosition: null };
+  // Use current squad (pre-transfer) as the base for user's own transfers
+  const sq = ps.squad_json;
+  const baseSquad = (sq.current_squad_players && sq.current_squad_players.length) ? sq.current_squad_players : sq.players;
+  _multiTransferState = { phase: 'sell', playersOut: [], playersIn: [], allCandidates: [], buyingPosition: null, baseSquad: baseSquad };
   renderMultiTransferModal();
 }
 
@@ -4809,7 +4826,8 @@ function renderMultiTransferModal() {
   if (!st) return;
 
   const sq = ps.squad_json;
-  const players = sq.players || [];
+  // Use the current (pre-transfer) squad for sell selection
+  const players = st.baseSquad || sq.players || [];
   const bank = sq.bank || 0;
   const posOrder = {GKP: 0, DEF: 1, MID: 2, FWD: 3};
 
@@ -5007,9 +5025,8 @@ function toggleSellPlayer(playerId) {
   if (idx >= 0) {
     st.playersOut.splice(idx, 1);
   } else {
-    const ps = _seasonV2StatusCache?.planned_squad;
-    if (!ps || !ps.squad_json) return;
-    const player = (ps.squad_json.players || []).find(p => p.player_id === playerId);
+    const players = st.baseSquad || [];
+    const player = players.find(p => p.player_id === playerId);
     if (player) st.playersOut.push({...player});
   }
   // Reset buy state when sell changes
@@ -5065,10 +5082,11 @@ async function mtLoadBuyCandidates(position) {
   if (!ps || !ps.squad_json) return;
   const sq = ps.squad_json;
 
-  // Current squad IDs minus sells plus buys
+  // Use current (pre-transfer) squad for exclusion, NOT the recommended squad
+  const baseSquad = st.baseSquad || sq.players || [];
   const outIds = new Set(st.playersOut.map(p => p.player_id));
   const inIds = new Set(st.playersIn.map(p => p.player_id));
-  const currentIds = new Set((sq.players || []).filter(p => !outIds.has(p.player_id)).map(p => p.player_id));
+  const currentIds = new Set(baseSquad.filter(p => !outIds.has(p.player_id)).map(p => p.player_id));
   inIds.forEach(id => currentIds.add(id));
 
   // Budget
@@ -5077,9 +5095,9 @@ async function mtLoadBuyCandidates(position) {
   const spentVal = st.playersIn.reduce((s, p) => s + (p.cost || 0), 0);
   const available = round1(bank + salesVal - spentVal);
 
-  // Team counts (remaining + bought)
+  // Team counts (remaining + bought) — use current squad, not recommended
   const teamCounts = {};
-  (sq.players || []).forEach(p => {
+  baseSquad.forEach(p => {
     if (outIds.has(p.player_id)) return;
     const tc = p.team_code || 0;
     teamCounts[tc] = (teamCounts[tc] || 0) + 1;
@@ -5104,7 +5122,7 @@ async function mtLoadBuyCandidates(position) {
     });
 
     candidates.sort((a, b) => (b.predicted_next_gw_points || 0) - (a.predicted_next_gw_points || 0));
-    candidates = candidates.slice(0, 50);
+    candidates = candidates.slice(0, 200);
     st.allCandidates = candidates;
     mtRenderBuyList(candidates);
   } catch(e) {
@@ -6745,7 +6763,7 @@ function renderChips(chips, chipValues) {
 function loadPrices() {
   const mid = getSeasonManagerId();
   if (!mid) return;
-  fetch(`/api/season/prices?manager_id=${mid}`)
+  fetch(`/api/prices/live?manager_id=${mid}`)
     .then(r => r.json())
     .then(d => {
       renderPriceAlerts(d.alerts || []);
@@ -6758,10 +6776,9 @@ function loadPrices() {
 function updatePrices() {
   const mid = getSeasonManagerId();
   if (!mid) return;
-  fetch('/api/season/update-prices', {
+  fetch('/api/prices/refresh', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({manager_id: parseInt(mid)}),
   }).then(() => loadPrices());
 }
 
@@ -6817,18 +6834,20 @@ function _renderPriceTableSorted() {
   const inArrow = _priceTableSort === 'in' ? (_priceTableSortAsc ? ' \u25B2' : ' \u25BC') : '';
   const outArrow = _priceTableSort === 'out' ? (_priceTableSortAsc ? ' \u25B2' : ' \u25BC') : '';
   let html = '<div class="bt-table-wrap"><table class="bt-table"><thead><tr>';
-  html += '<th>Player</th><th>Price</th>';
+  html += '<th>Player</th><th>Team</th><th>Price</th>';
   html += `<th style="cursor:pointer" onclick="sortPriceTable('in')">In<span class="sort-arrow">${inArrow}</span></th>`;
   html += `<th style="cursor:pointer" onclick="sortPriceTable('out')">Out<span class="sort-arrow">${outArrow}</span></th>`;
-  html += '<th>Date</th>';
+  html += '<th>Source</th>';
   html += '</tr></thead><tbody>';
   sorted.forEach(p => {
+    const src = p.in_squad ? 'Squad' : p.in_watchlist ? 'Watch' : (p.snapshot_date || '-');
     html += `<tr>
       <td>${p.web_name || '-'}</td>
+      <td>${p.team_short || '-'}</td>
       <td>${p.price ? p.price.toFixed(1) + 'm' : '-'}</td>
       <td style="color:var(--green)">${(p.transfers_in_event || 0).toLocaleString()}</td>
       <td style="color:var(--red)">${(p.transfers_out_event || 0).toLocaleString()}</td>
-      <td>${p.snapshot_date || '-'}</td>
+      <td>${src}</td>
     </tr>`;
   });
   html += '</tbody></table></div>';
@@ -6846,9 +6865,7 @@ function sortPriceTable(col) {
 }
 
 function loadPricePredictions() {
-  const mid = getSeasonManagerId();
-  if (!mid) return;
-  fetch(`/api/season/price-predictions?manager_id=${mid}`)
+  fetch('/api/prices/predictions')
     .then(r => r.json())
     .then(d => {
       const el = document.getElementById('pricePredictionsDisplay');
@@ -6927,7 +6944,7 @@ function addToWatchlist(playerId) {
   if (!mid) return;
   document.getElementById('watchlistDropdown').style.display = 'none';
   document.getElementById('watchlistSearch').value = '';
-  fetch('/api/season/watchlist/add', {
+  fetch('/api/prices/watchlist/add', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({manager_id: parseInt(mid), player_id: playerId}),
@@ -6937,7 +6954,7 @@ function addToWatchlist(playerId) {
 function removeFromWatchlist(playerId) {
   const mid = getSeasonManagerId();
   if (!mid) return;
-  fetch('/api/season/watchlist/remove', {
+  fetch('/api/prices/watchlist/remove', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({manager_id: parseInt(mid), player_id: playerId}),
@@ -6947,7 +6964,7 @@ function removeFromWatchlist(playerId) {
 function loadWatchlist() {
   const mid = getSeasonManagerId();
   if (!mid) return;
-  fetch(`/api/season/watchlist?manager_id=${mid}`)
+  fetch(`/api/prices/watchlist?manager_id=${mid}`)
     .then(r => r.json())
     .then(d => renderWatchlist(d.watchlist || []));
 }

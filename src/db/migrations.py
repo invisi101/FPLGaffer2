@@ -86,12 +86,30 @@ def _migration_003_drop_strategy_tables(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migration_004_standalone_watchlist(conn: sqlite3.Connection) -> None:
+    """Add watchlist_standalone table keyed by manager_id (season-independent)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS watchlist_standalone (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            manager_id INTEGER NOT NULL,
+            player_id INTEGER NOT NULL,
+            web_name TEXT,
+            team_code INTEGER,
+            price_when_added REAL,
+            added_date TEXT NOT NULL DEFAULT (date('now')),
+            UNIQUE(manager_id, player_id)
+        )
+    """)
+    conn.commit()
+
+
 # Registry: version number -> migration function.
 # Each migration brings the DB from (version - 1) to (version).
 _MIGRATIONS: dict[int, callable] = {
     1: _migration_001_initial_schema,
     2: _migration_002_planned_squad_and_phase,
     3: _migration_003_drop_strategy_tables,
+    4: _migration_004_standalone_watchlist,
 }
 
 LATEST_VERSION: int = max(_MIGRATIONS)

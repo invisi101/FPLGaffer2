@@ -537,6 +537,9 @@ class SeasonManager:
                 "opponent": opponent_map.get(tc, ""),
             }
 
+        # Build enriched current squad (pre-transfer) for frontend display
+        current_squad_players = [_enrich_player(pid) for pid in current_squad_ids]
+
         if used_planner and gw1_step:
             # Build transfer pairs from planner
             transfers = []
@@ -647,6 +650,7 @@ class SeasonManager:
             transfers_json=transfers_json,
             hits=hits,
             predicted_points=predicted_points,
+            current_squad_players=current_squad_players,
         )
 
         self.planned_squads.save_planned_squad(
@@ -1362,6 +1366,7 @@ class SeasonManager:
         transfers_json: str,
         hits: int,
         predicted_points: float,
+        current_squad_players: list[dict] | None = None,
     ) -> dict:
         """Build the planned squad dict from the recommendation data.
 
@@ -1372,7 +1377,12 @@ class SeasonManager:
         players: list[dict] = []
         if new_squad_json:
             try:
-                players = json.loads(new_squad_json) if isinstance(new_squad_json, str) else new_squad_json
+                parsed = json.loads(new_squad_json) if isinstance(new_squad_json, str) else new_squad_json
+                # Handle both formats: full squad_json dict or bare player list
+                if isinstance(parsed, dict) and "players" in parsed:
+                    players = parsed["players"]
+                elif isinstance(parsed, list):
+                    players = parsed
             except (json.JSONDecodeError, TypeError):
                 players = []
 
@@ -1410,8 +1420,13 @@ class SeasonManager:
         except (json.JSONDecodeError, TypeError):
             pass
 
+        # Optimize current squad XI for display (if available)
+        if current_squad_players:
+            current_squad_players = optimize_starting_xi(current_squad_players)
+
         squad_json = {
             "players": players,
+            "current_squad_players": current_squad_players or [],
             "captain_id": captain_id,
             "vice_captain_id": vc_id,
             "bank": bank,
@@ -1865,7 +1880,11 @@ class SeasonManager:
             return {"error": "No planned squad to modify"}
 
         squad_json = copy.deepcopy(planned["squad_json"])
-        players = squad_json.get("players", [])
+
+        # Use current (pre-transfer) squad as the base for user's own transfers.
+        # This prevents the bug where recommended transfers pollute the player list.
+        current_squad = squad_json.get("current_squad_players", [])
+        players = current_squad if current_squad else squad_json.get("players", [])
 
         # --- Validate all out IDs exist in squad ---
         players_by_id = {p["player_id"]: p for p in players}
@@ -1966,9 +1985,9 @@ class SeasonManager:
                 "is_vice_captain": False,
             })
 
-        # --- Track transfer in/out lists ---
-        transfers_in = list(squad_json.get("transfers_in", []))
-        transfers_out = list(squad_json.get("transfers_out", []))
+        # --- Track transfer in/out lists (fresh — user's own transfers) ---
+        transfers_in = []
+        transfers_out = []
         for el in in_elements:
             in_tc = id_to_code.get(el.get("team"))
             transfers_in.append({
@@ -2029,14 +2048,25 @@ class SeasonManager:
         if not rec:
             return {"error": "No original recommendation to revert to"}
 
-        # Rebuild squad_json from the recommendation.
-        raw = rec.get("new_squad_json")
-        if not raw:
-            return {"error": "Recommendation has no squad data"}
-        try:
-            squad_json = json.loads(raw) if isinstance(raw, str) else raw
-        except (json.JSONDecodeError, TypeError):
-            return {"error": "Recommendation squad data is corrupted"}
+        # Preserve current_squad_players and bank from the existing planned squad
+        existing = self.planned_squads.get_planned_squad(season_id, next_gw)
+        current_squad_players = None
+        existing_bank = 0.0
+        if existing and existing.get("squad_json"):
+            current_squad_players = existing["squad_json"].get("current_squad_players")
+            existing_bank = existing["squad_json"].get("bank", 0)
+
+        # Rebuild the full planned squad dict from the recommendation
+        squad_json = self._build_planned_squad(
+            new_squad_json=rec.get("new_squad_json"),
+            captain_id=rec.get("captain_id"),
+            bank=existing_bank,
+            free_transfers=rec.get("free_transfers") or 1,
+            transfers_json=rec.get("transfers_json") or "[]",
+            hits=0,
+            predicted_points=rec.get("predicted_points") or 0,
+            current_squad_players=current_squad_players,
+        )
 
         self.planned_squads.save_planned_squad(
             season_id, next_gw, squad_json, source="recommended",

@@ -20,6 +20,7 @@ a = Analysis(
         "src.api.helpers",
         "src.api.middleware",
         "src.api.prices_bp",
+        "src.api.prices_standalone_bp",
         "src.api.season_bp",
         "src.api.season_v2_bp",
         "src.api.sse",
