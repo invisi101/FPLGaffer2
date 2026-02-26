@@ -77,10 +77,11 @@ def api_v2_tick():
     if err:
         return jsonify(err[0]), err[1]
 
+    force_replan = bool(body.get("force_replan", False))
     mgr = _get_mgr()
 
     def do_tick():
-        alerts = mgr.tick(manager_id, progress_fn=broadcast)
+        alerts = mgr.tick(manager_id, progress_fn=broadcast, force_replan=force_replan)
         for alert in alerts:
             broadcast(alert.get("message", str(alert)), event="alert")
 

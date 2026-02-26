@@ -171,11 +171,15 @@ class SeasonManager:
             "manager_id": manager_id,
         }
 
-    def tick(self, manager_id: int, progress_fn=None) -> list[dict]:
+    def tick(self, manager_id: int, progress_fn=None, force_replan: bool = False) -> list[dict]:
         """Run one tick of the state machine.
 
         Inspects the current phase and performs the appropriate work.
         Returns a list of alert dicts (suitable for SSE broadcast).
+
+        If *force_replan* is True and the current phase is READY, re-run
+        the full planning pipeline with fresh data (useful when new
+        injuries/price changes are discovered).
         """
         status = self.get_status(manager_id)
         if not status["active"]:
@@ -184,6 +188,9 @@ class SeasonManager:
         phase = status["phase"]
         season = self.seasons.get_season(manager_id)
 
+        if force_replan and phase == GWPhase.READY.value:
+            logger.info("Force replan requested — re-running planning from READY phase")
+            return self._tick_planning(manager_id, season, status, progress_fn)
         if phase == GWPhase.PLANNING.value:
             return self._tick_planning(manager_id, season, status, progress_fn)
         if phase == GWPhase.READY.value:

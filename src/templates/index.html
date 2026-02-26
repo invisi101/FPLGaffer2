@@ -4420,14 +4420,16 @@ function renderPlanningPhase(el, data) {
   }
 }
 
-async function triggerV2Tick() {
+async function triggerV2Tick(forceReplan) {
   const mid = getSeasonManagerId();
   if (!mid) return;
   try {
+    const payload = {manager_id: parseInt(mid)};
+    if (forceReplan) payload.force_replan = true;
     const resp = await fetch('/api/v2/season/tick', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({manager_id: parseInt(mid)}),
+      body: JSON.stringify(payload),
     });
     const d = await resp.json();
     if (d.error) { alert(d.error); return; }
@@ -4513,6 +4515,7 @@ function renderReadyPhase(el, data) {
     <button class="btn btn-primary" onclick="acceptTransfersV2()">Accept Recommendations</button>
     <button class="btn" onclick="openMultiTransferModal()">Make My Own Transfers</button>
     ${source === 'user_override' ? '<button class="btn" onclick="undoTransfersV2()">Reset to Recommendations</button>' : ''}
+    <button class="btn" onclick="triggerV2Tick(true)" title="Re-fetch latest data and regenerate recommendations">Update Recommendations</button>
   </div>`;
   html += '</div>';
 
