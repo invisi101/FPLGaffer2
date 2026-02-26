@@ -1145,7 +1145,7 @@ class SeasonManager:
 
         # 4. Refresh FPL API data to ensure cache is fresh
         log("Refreshing FPL data...")
-        fetch_fpl_api(force=True)
+        fetch_fpl_api("bootstrap", force=True)
         bootstrap = load_bootstrap()
         if not bootstrap:
             return {"error": "Could not load bootstrap data"}
