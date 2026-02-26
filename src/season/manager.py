@@ -1708,7 +1708,23 @@ class SeasonManager:
             return {"error": "No planned squad to modify"}
 
         squad_json = copy.deepcopy(planned["squad_json"])
-        players = squad_json.get("players", [])
+
+        # Use current (pre-transfer) squad as the base for user's own transfers.
+        # When starting from current squad, reset transfer lists so the model's
+        # recommended transfers don't pollute the user's choices.
+        current_squad = squad_json.get("current_squad_players", [])
+        if current_squad:
+            source = planned.get("source", "recommended")
+            if source == "recommended":
+                # First user override — start fresh from current squad
+                players = list(current_squad)
+                squad_json["transfers_in"] = []
+                squad_json["transfers_out"] = []
+            else:
+                # Subsequent user overrides — use already-modified players
+                players = squad_json.get("players", [])
+        else:
+            players = squad_json.get("players", [])
 
         # --- Find the outgoing player ---
         out_player = None
