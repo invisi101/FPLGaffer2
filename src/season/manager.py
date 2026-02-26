@@ -1306,19 +1306,22 @@ class SeasonManager:
                 except (TypeError, json.JSONDecodeError):
                     pass
 
-        # 3. Fallback to FPL API picks (fresh install, no snapshot yet)
+        # 3. Fallback to FPL API picks (fresh install / init crashed partway)
         if not squad_ids:
             try:
-                from src.data.fpl_api import fetch_manager_picks
-                from src.api.helpers import get_next_gw
-                gw = next_gw or get_next_gw(bootstrap)
-                if gw:
-                    picks_data = fetch_manager_picks(manager_id, gw - 1) if gw > 1 else None
-                    if picks_data:
-                        picks = picks_data.get("picks", [])
-                        squad_ids = {p["element"] for p in picks}
-            except Exception:
-                pass
+                from src.data.fpl_api import fetch_manager_picks, fetch_manager_history
+                history = fetch_manager_history(manager_id)
+                if history:
+                    current_events = history.get("current", [])
+                    if current_events:
+                        latest_gw = current_events[-1].get("event")
+                        if latest_gw:
+                            picks_data = fetch_manager_picks(manager_id, latest_gw)
+                            if picks_data:
+                                picks = picks_data.get("picks", [])
+                                squad_ids = {p["element"] for p in picks}
+            except Exception as exc:
+                logger.warning("FPL API fallback for price tracking failed: %s", exc)
 
         # Add watchlist
         watchlist = self.watchlist.get_watchlist(season_id)
@@ -1326,6 +1329,7 @@ class SeasonManager:
         all_ids = squad_ids | watchlist_ids
 
         if not all_ids:
+            logger.warning("No squad or watchlist IDs found for price tracking (season %d)", season_id)
             return
 
         price_snapshots = []
